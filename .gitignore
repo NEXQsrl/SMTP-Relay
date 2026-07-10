@@ -1,0 +1,21 @@
+# Build output
+[Bb]in/
+[Oo]bj/
+publish/
+*.user
+
+# .NET
+project.assets.json
+*.nuget.props
+*.nuget.targets
+
+# Rider / VS
+.idea/
+.vs/
+
+# Runtime data / secrets (mai committare)
+secrets.dat
+entropy.bin
+*.pfx
+logs/
+failed/

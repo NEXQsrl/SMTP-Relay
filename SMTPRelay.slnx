@@ -1,0 +1,5 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/SmtpRelay.Service/SmtpRelay.Service.csproj" />
+  </Folder>
+</Solution>

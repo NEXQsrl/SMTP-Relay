@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk.Worker">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UserSecretsId>dotnet-SmtpRelay.Service-e05a49e8-528e-43ab-b294-c8013255b3c4</UserSecretsId>
+    <AssemblyName>SmtpRelay</AssemblyName>
+    <RootNamespace>SmtpRelay</RootNamespace>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>false</SelfContained>
+    <Version>1.0.0</Version>
+    <Product>SMTP Relay Service</Product>
+    <Company>NexQ</Company>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="MailKit" Version="4.17.0" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.9" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.9" />
+    <PackageReference Include="Microsoft.Identity.Client" Version="4.86.0" />
+    <PackageReference Include="MimeKit" Version="4.17.0" />
+    <PackageReference Include="Serilog.Extensions.Hosting" Version="10.0.0" />
+    <PackageReference Include="Serilog.Settings.Configuration" Version="10.0.1" />
+    <PackageReference Include="Serilog.Sinks.Console" Version="6.1.1" />
+    <PackageReference Include="Serilog.Sinks.File" Version="7.0.0" />
+    <PackageReference Include="SmtpServer" Version="11.1.0" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.9" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="appsettings.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="appsettings.Development.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>
