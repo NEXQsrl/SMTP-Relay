@@ -5,13 +5,16 @@ using SmtpRelay.Configuration;
 
 namespace SmtpRelay;
 
-/// <summary>Costruisce il logger Serilog con rotazione, retention e audit trail separato.</summary>
+/// <summary>Builds the Serilog logger: rotation, retention, separate audit trail and Windows event log.</summary>
 public static class LoggingSetup
 {
-    /// <summary>Categoria ILogger i cui eventi finiscono nel file di audit.</summary>
+    /// <summary>ILogger category whose events go to the audit file.</summary>
     public const string AuditSourceContext = "SmtpRelay.Audit";
 
-    public static Serilog.Core.Logger CreateLogger(RelayOptions options)
+    /// <summary>Source of the entries written to the Windows Application event log.</summary>
+    public const string EventLogSource = "SmtpRelay";
+
+    public static Serilog.Core.Logger CreateLogger(RelayOptions options, bool runningAsService)
     {
         var log = options.Logging;
         var level = ParseLevel(log.MinimumLevel);
@@ -31,10 +34,22 @@ public static class LoggingSetup
             .MinimumLevel.Override("Microsoft.Hosting.Lifetime", LogEventLevel.Information)
             .Enrich.FromLogContext();
 
-        if (log.Console)
+        if (log.Console && !runningAsService)
             config.WriteTo.Console(outputTemplate: template);
 
-        // Log applicativo generale (esclude gli eventi di audit se il trail separato e attivo).
+        // Warnings and errors also reach the Windows event log, where monitoring tools look first.
+        // The source is registered by "SmtpRelay install"; without it the sink stays silent.
+        if (log.EventLog && runningAsService)
+        {
+            config.WriteTo.EventLog(
+                source: EventLogSource,
+                logName: "Application",
+                manageEventSource: false,
+                restrictedToMinimumLevel: LogEventLevel.Warning,
+                outputTemplate: "{SourceContext}: {Message:lj}{NewLine}{Exception}");
+        }
+
+        // Application log (delivery events are left out when the separate audit trail is on).
         config.WriteTo.Logger(sub =>
         {
             if (log.AuditTrail)
@@ -51,7 +66,7 @@ public static class LoggingSetup
                 outputTemplate: template);
         });
 
-        // Audit trail dedicato (solo eventi di consegna).
+        // Audit trail (delivery events only).
         if (log.AuditTrail)
         {
             config.WriteTo.Logger(sub =>

@@ -4,43 +4,100 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Windows SMTP relay service in C# / .NET 10 (single project: `src/SmtpRelay.Service`, assembly name `SmtpRelay`, root namespace `SmtpRelay`). It accepts mail from IP-allowlisted internal senders and forwards it to a smart host — Microsoft 365 via OAuth2 client credentials (XOAUTH2) or any SMTP server via Basic auth. Windows-only (`net10.0-windows`, DPAPI, Windows service APIs).
+NEXQ SMTP Relay: a Windows SMTP relay in C# / .NET 10, meant to replace the IIS 6 SMTP relay. It accepts mail from
+IP-allowlisted internal senders and forwards it to a smart host: Microsoft 365 via OAuth2 client credentials
+(XOAUTH2), any SMTP server via Basic auth, or an anonymous connector. Windows-only (`net10.0-windows`, DPAPI,
+Windows service APIs, WPF). Source-available under PolyForm Shield 1.0.0; the repository is `NEXQsrl/SMTP-Relay`.
 
-**Language convention: the entire repo is in Italian** — README, code comments, log messages, CLI output. Keep new comments and user-facing strings in Italian to match.
-
-There is no test project; verification is done via the built-in CLI diagnostics (`test-upstream`, `show-config`).
+**Language convention.** Everything the administrator reads is in **English**: console UI, CLI output, log
+messages, SMTP replies, code comments. User documentation is kept in **English and Italian** in parallel
+(`README.md` / `README_IT.md`, `SECURITY.md` / `SECURITY_IT.md`): change both. Do not add PowerShell scripts to the
+repository; build logic lives in `build/Release.proj` (MSBuild) and in the workflows.
 
 ## Commands
 
 ```powershell
-# Build
-dotnet build -c Release
+dotnet build SMTPRelay.slnx
+dotnet test SMTPRelay.slnx
+dotnet test tests/SmtpRelay.Tests --filter "FullyQualifiedName~RelayEndToEndTests.MessageIsForwarded"   # one test
 
-# Publish (framework-dependent; add -SelfContained to bundle the runtime)
-.\publish.ps1
-# equivalent: dotnet publish src/SmtpRelay.Service -c Release -o publish -r win-x64 --self-contained false
+dotnet run --project src/SmtpRelay.Service      # relay in the console, port 2525 (appsettings.Development.json)
+dotnet run --project src/SmtpRelay.Manager      # management console; Debug builds are not elevated
 
-# Run locally as a console app (listens on port 2525 by default)
-dotnet run --project src/SmtpRelay.Service
+# README pictures: rendered from the real UI with sample data (Debug only)
+dotnet run --project src/SmtpRelay.Manager -- --screenshots assets\screenshots
+
+# Release: self-contained publish, signing, Inno Setup installer, zip, SHA256SUMS -> artifacts\release
+dotnet msbuild build\Release.proj -restore -t:Release -p:SignThumbprint=<thumbprint in CurrentUser\My>
 ```
 
-The published `SmtpRelay.exe` doubles as a management CLI. Verbs (defined in `Cli/CommandLineHandler.cs`): `install` / `uninstall` / `start` / `stop` / `status` (Windows service lifecycle, require admin), `set-credential` / `remove-credential` / `list-credentials` (DPAPI secret store), `test-upstream` (connect + authenticate against the smart host), `show-config` (effective config + validation), `help`.
+The release build needs Inno Setup 6 (`ISCC.exe`); `signtool.exe` comes from a NuGet `PackageDownload` in
+`build/Release.proj`. The version is `<Version>` in `Directory.Build.props` and must be bumped for every release
+(the console compares it with the GitHub release tag `v<Version>`).
 
-Other scripts: `SmtpRelayConfigurator.ps1` (admin GUI to edit `appsettings.json`, set secrets, and run CLI verbs), `FirmareDLL_EXE.ps1` (Authenticode-signs published exe/dll).
+Workflows: `.github/workflows/ci.yml` builds, tests and fails on vulnerable packages for every push and PR.
+`.github/workflows/release.yml` is manual (`workflow_dispatch`) and refuses to publish without the signing secrets
+`SIGN_PFX_BASE64` / `SIGN_PFX_PASSWORD`. Pushing to `master` does not publish anything.
 
 ## Architecture
 
-`Program.cs` is a dual-mode entry point: if `args[0]` is a CLI verb it dispatches to `CommandLineHandler` and exits; otherwise it validates config fail-fast (`RelayOptionsValidator`), builds a generic host with `AddWindowsService`, and runs `SmtpRelayHostedService`. `Cli/ConfigLoader.cs` builds configuration for both modes: `appsettings.json` next to the exe → `appsettings.{env}.json` → env vars prefixed `SMTPRELAY_` (`__` separator), all bound to the `SmtpRelay` section as `RelayOptions` (see `Configuration/`).
+Three projects share one installation folder (the release publishes them self-contained into the same directory):
 
-Inbound message flow, wired in `Smtp/SmtpRelayHostedService.cs` on the `SmtpServer` library's component model:
+- **`src/SmtpRelay.Core`** (library, root namespace `SmtpRelay`): `Configuration/` (`RelayOptions` and friends,
+  `ConfigLoader` load + atomic save, `RelayOptionsValidator` errors and warnings), `Security/` (`SecretStore`,
+  `SecretProtector`, `MachineKey`, `WindowsAcl`, `IpAllowList`, `LogSanitizer`), `Relay/` (`UpstreamSender`,
+  `Microsoft365TokenProvider`). Anything both executables need goes here.
+- **`src/SmtpRelay.Service`** (`SmtpRelay.exe`): dual-mode entry point. If `args[0]` is a CLI verb
+  (`Cli/CommandLineHandler.cs`) it runs the command and exits; otherwise it validates the config fail-fast and runs
+  `Smtp/SmtpRelayHostedService` under the generic host with `AddWindowsService`.
+- **`src/SmtpRelay.Manager`** (`SmtpRelayManager.exe`, WPF, `requireAdministrator` in Release): one window,
+  `ViewModels/MainViewModel.cs` over the Core types, `Services/` for service control, log reading, the manager's own
+  activity log and updates.
 
-1. **`Smtp/AllowListEndpointListener.cs`** — wraps the socket listener; connections from IPs outside `Security/IpAllowList.cs` (CIDR, IPv4/IPv6) are closed *before* the SMTP banner. Fail-closed when the list is empty and `RejectWhenAllowListEmpty` is true.
-2. **`Smtp/RelayMailboxFilter.cs`** — enforces recipient limits and rejects `MAIL FROM` on unencrypted sessions when TLS mode is `StartTlsRequired`.
-3. **`Smtp/RelayMessageStore.cs`** — receives the message, hands it to the sender, maps outcomes to SMTP replies (250 delivered / 451 transient / 554 permanent), writes the audit log, and spools failed messages as `.eml` to `{DataDirectory}\failed` when enabled.
-4. **`Relay/UpstreamSender.cs`** — delivers via MailKit with linear-backoff retries; transient vs permanent is signaled through `UpstreamDeliveryException`. In Microsoft365 mode, `Relay/Microsoft365TokenProvider.cs` acquires app-only tokens via MSAL.
+Inbound message flow, wired in `SmtpRelayHostedService` on the `SmtpServer` library's component model:
 
-Secrets are never in `appsettings.json` — config references them by name (e.g. `PasswordSecret`, `ClientSecretName`) and `Security/SecretStore.cs` resolves them from `secrets.dat`, encrypted with DPAPI LocalMachine plus per-install entropy (`Security/MachineKey.cs` → `entropy.bin`); both files get SYSTEM/Administrators-only ACLs via `Security/WindowsAcl.cs`. Blobs are machine-bound and cannot be copied between hosts.
+1. `Smtp/AllowListEndpointListener.cs` wraps the socket listener. Connections outside `IpAllowList`, with an
+   unknown remote address, or above `MaxConcurrentSessions` are closed before the SMTP banner. After dropping a
+   connection **both** `EndpointListener.RemoteEndPointKey` and `LocalEndPointKey` must be removed from the session
+   context, or the library throws on the next accept and that connection hangs.
+2. `Smtp/RelayMailboxFilter.cs` enforces recipient and size limits and required STARTTLS.
+3. `Smtp/RelayMessageStore.cs` hands the message to the sender, maps the outcome to the SMTP reply (250 / 451 /
+   554), writes the audit line and spools failed messages as `.eml`. Unclassified exceptions are treated as
+   transient so a defect never loses mail silently.
+4. `Relay/UpstreamSender.cs` delivers via MailKit with linear back-off. Transient vs permanent is signalled with
+   `UpstreamDeliveryException`. Credentials are sent only when `client.IsSecure` (or `AllowInsecureAuthentication`).
 
-Logging (`LoggingSetup.cs`) is Serilog with two sinks under `{DataDirectory}\logs` (default `C:\ProgramData\SmtpRelay`): the application log and a separate audit trail (`audit-*.log`) filtered by the `LoggingSetup.AuditSourceContext` source context — use that logger for delivery events only.
+Configuration: `appsettings.json` next to the executables -> `appsettings.{env}.json` -> env vars prefixed
+`SMTPRELAY_` (`__` separator), bound to the `SmtpRelay` section. Read once at startup: changes need a service
+restart. The one exception is secrets: `SecretStore` reloads `secrets.dat` when its timestamp changes, so a secret
+stored from the console or the CLI reaches the running service.
 
-Note: `appsettings.json` at the repo root is a deployment sample; the one that ships is `src/SmtpRelay.Service/appsettings.json`. They are not kept in sync automatically.
+Secrets are never in `appsettings.json`; config references them by name and `SecretStore` resolves them from
+`{DataDirectory}\secrets.dat` (DPAPI LocalMachine + per-install entropy in `entropy.bin`). The data directory
+(default `C:\ProgramData\SmtpRelay`) is hardened to SYSTEM/Administrators (+ the service account) by
+`SmtpRelay.exe install` and at service start when running as LocalSystem.
+
+Logging (`LoggingSetup.cs`, Serilog): application log `smtp-relay-*.log`, audit trail `audit-*.log` (events from
+the `LoggingSetup.AuditSourceContext` logger only: use it for delivery events and nothing else), Windows event log
+(Warning+, source `SmtpRelay`, only when running as a service). The console writes `manager-yyyyMM.log` via
+`ManagerLog`. Any text that comes from the network goes through `LogSanitizer.Clean` before logging.
+
+Updates (`Manager/Services/UpdateService.cs`): the console reads `releases/latest` from the GitHub API, downloads
+`SmtpRelay-Setup-*.exe` only from this repository's release downloads into `{DataDirectory}\updates` (hardened),
+then requires the SHA-256 published by GitHub and an intact Authenticode signature whose signer thumbprint is the
+NEXQ certificate (`UpdateService.PublisherThumbprint`) or the signer of the running console
+(`Services/Authenticode.cs`, WinVerifyTrust). The setup is started with `/SILENT /RELAUNCH=1`;
+`installer/SmtpRelay.iss` stops the service, replaces the files, restarts the service if it was running, and reopens
+the console.
+
+## Things that are easy to get wrong
+
+- The WPF project must **not** set `InvariantGlobalization` (WPF bindings throw at startup). The culture is forced
+  to en-US in `App.OnStartup` instead.
+- `SmtpRelay.exe status` exit codes are part of the installer contract: 0 = running, 3 = not running, 4 = not
+  installed (`installer/SmtpRelay.iss` uses 0 to decide whether to restart the service after an upgrade).
+- `appsettings.json` is installed with `onlyifdoesntexist uninsneveruninstall`: new settings must have sensible
+  defaults in the options classes, because existing installations keep their old file.
+- The tests (`tests/SmtpRelay.Tests`) run the real listener against a fake smart host on loopback; SMTP-path
+  changes should be covered there. `TheReleaseSetupPassesTheUpdateVerification` only acts when
+  `SMTPRELAY_SIGNED_SETUP` points to a built setup.

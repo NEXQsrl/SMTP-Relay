@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <AssemblyName>SmtpRelayManager</AssemblyName>
+    <RootNamespace>SmtpRelay.Manager</RootNamespace>
+    <AssemblyTitle>NEXQ SMTP Relay management console</AssemblyTitle>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>false</SelfContained>
+    <ApplicationIcon>..\..\assets\brand\app.ico</ApplicationIcon>
+    <!-- Release builds always start elevated (the console edits files in Program Files and controls a service).
+         Debug builds run as the current user so that they can be started from an IDE. -->
+    <ApplicationManifest Condition="'$(Configuration)' == 'Release'">app.manifest</ApplicationManifest>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SmtpRelay.Core\SmtpRelay.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.ServiceProcess.ServiceController" Version="10.0.15" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="..\..\assets\brand\mark.png" Link="Assets\mark.png" />
+    <Resource Include="..\..\assets\brand\app.ico" Link="Assets\app.ico" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="SmtpRelay.Tests" />
+  </ItemGroup>
+</Project>

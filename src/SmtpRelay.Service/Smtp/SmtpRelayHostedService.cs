@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Sockets;
 using System.Security.Authentication;
 using System.Security.Cryptography.X509Certificates;
 using Microsoft.Extensions.Hosting;
@@ -12,8 +13,8 @@ using SmtpServer.Net;
 namespace SmtpRelay.Smtp;
 
 /// <summary>
-/// Servizio ospitato che avvia il server SMTP in ascolto, applica il gate IP a livello di connessione,
-/// il TLS opzionale e inoltra i messaggi all'upstream.
+/// Hosted service that runs the listening SMTP server: IP gate at connection level, optional TLS,
+/// and forwarding of the messages to the smart host.
 /// </summary>
 public sealed class SmtpRelayHostedService : BackgroundService
 {
@@ -23,6 +24,8 @@ public sealed class SmtpRelayHostedService : BackgroundService
     private readonly IpAllowList _allowList;
     private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger<SmtpRelayHostedService> _logger;
+    private readonly IHostApplicationLifetime _lifetime;
+    private readonly SessionLimiter _limiter;
 
     private X509Certificate2? _certificate;
 
@@ -32,7 +35,8 @@ public sealed class SmtpRelayHostedService : BackgroundService
         SecretStore secrets,
         IpAllowList allowList,
         ILoggerFactory loggerFactory,
-        ILogger<SmtpRelayHostedService> logger)
+        ILogger<SmtpRelayHostedService> logger,
+        IHostApplicationLifetime lifetime)
     {
         _options = options;
         _sender = sender;
@@ -40,38 +44,62 @@ public sealed class SmtpRelayHostedService : BackgroundService
         _allowList = allowList;
         _loggerFactory = loggerFactory;
         _logger = logger;
+        _lifetime = lifetime;
+        _limiter = new SessionLimiter(options.Listener.MaxConcurrentSessions);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _certificate = CertificateLoader.Load(_options.Tls, _secrets, _logger);
-
-        var serverOptions = BuildServerOptions();
-        var serviceProvider = BuildComponents();
-
-        var server = new SmtpServer.SmtpServer(serverOptions, serviceProvider);
-        server.SessionCreated += (_, e) => _logger.LogDebug("Sessione avviata {SessionId}.", e.Context.SessionId);
-        server.SessionCompleted += (_, e) => _logger.LogDebug("Sessione completata {SessionId}.", e.Context.SessionId);
-        server.SessionFaulted += (_, e) => _logger.LogDebug(e.Exception, "Sessione in errore.");
-
-        _logger.LogInformation(
-            "SMTP Relay in ascolto su {Ip}:{Port} | Upstream={Mode} {Host}:{UpstreamPort} | TLS ingresso={Tls} | IP consentiti={AllowCount}",
-            _options.Listener.IpAddress, _options.Listener.Port,
-            _options.Upstream.Mode, _options.Upstream.Host, _options.Upstream.Port,
-            _options.Tls.Mode, _allowList.Count);
-
         try
         {
+            _certificate = CertificateLoader.Load(_options.Tls, _secrets, _logger);
+
+            var server = new SmtpServer.SmtpServer(BuildServerOptions(), BuildComponents());
+            server.SessionCreated += (_, e) => _logger.LogDebug("Session started {SessionId}.", e.Context.SessionId);
+            server.SessionCompleted += (_, e) =>
+            {
+                _limiter.Exit(e.Context);
+                _logger.LogDebug("Session completed {SessionId}.", e.Context.SessionId);
+            };
+            server.SessionCancelled += (_, e) => _limiter.Exit(e.Context);
+            server.SessionFaulted += (_, e) =>
+            {
+                _limiter.Exit(e.Context);
+                _logger.LogDebug(e.Exception, "Session faulted.");
+            };
+
+            _logger.LogInformation(
+                "Listening on {Ip}:{Port} | upstream {Mode} {Host}:{UpstreamPort} ({Security}) | inbound TLS {Tls} | {AllowCount} allowlist entries",
+                _options.Listener.IpAddress, _options.Listener.Port,
+                _options.Upstream.Mode, _options.Upstream.Host, _options.Upstream.Port, _options.Upstream.Security,
+                _options.Tls.Mode, _allowList.Count);
+
             await server.StartAsync(stoppingToken).ConfigureAwait(false);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
-            // Arresto normale.
+            // Normal shutdown.
+        }
+        catch (Exception ex)
+        {
+            if (ex is SocketException { SocketErrorCode: SocketError.AddressAlreadyInUse or SocketError.AccessDenied })
+            {
+                _logger.LogCritical(
+                    "Cannot listen on {Ip}:{Port}: the port is in use by another program (for example the IIS SMTP service) or reserved. The relay is stopping.",
+                    _options.Listener.IpAddress, _options.Listener.Port);
+            }
+            else
+            {
+                _logger.LogCritical(ex, "The SMTP listener failed. The relay is stopping.");
+            }
+
+            Environment.ExitCode = 1;
+            _lifetime.StopApplication();
         }
         finally
         {
             _certificate?.Dispose();
-            _logger.LogInformation("SMTP Relay arrestato.");
+            _logger.LogInformation("SMTP Relay stopped.");
         }
     }
 
@@ -86,7 +114,7 @@ public sealed class SmtpRelayHostedService : BackgroundService
                 endpoint
                     .Endpoint(new IPEndPoint(IPAddress.Parse(_options.Listener.IpAddress), _options.Listener.Port))
                     .IsSecure(false)
-                    .AllowUnsecureAuthentication(true)
+                    .AllowUnsecureAuthentication(false)
                     .SupportedSslProtocols(ResolveSslProtocols());
 
                 if (_certificate is not null)
@@ -109,7 +137,7 @@ public sealed class SmtpRelayHostedService : BackgroundService
             componentLogger,
             auditLogger));
         serviceProvider.Add(new RelayMailboxFilter(_options.Listener, _options.Tls.Mode, componentLogger));
-        serviceProvider.Add(new AllowListEndpointListenerFactory(new EndpointListenerFactory(), _allowList, componentLogger));
+        serviceProvider.Add(new AllowListEndpointListenerFactory(new EndpointListenerFactory(), _allowList, _limiter, componentLogger));
 
         return serviceProvider;
     }

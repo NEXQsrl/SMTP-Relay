@@ -1,5 +1,6 @@
 using System.Net;
 using Microsoft.Extensions.Logging;
+using SmtpRelay.Security;
 using SmtpServer;
 using SmtpServer.IO;
 using SmtpServer.Net;
@@ -7,40 +8,45 @@ using SmtpServer.Net;
 namespace SmtpRelay.Smtp;
 
 /// <summary>
-/// Factory che avvolge il listener di default per applicare l'allowlist IP a livello di socket:
-/// gli IP non consentiti vengono chiusi immediatamente, prima di ricevere qualsiasi banner SMTP.
+/// Wraps the default listener factory to apply the IP allowlist and the session limit at socket level:
+/// refused connections are closed at once, before any SMTP banner is sent.
 /// </summary>
 public sealed class AllowListEndpointListenerFactory : IEndpointListenerFactory
 {
     private readonly IEndpointListenerFactory _inner;
-    private readonly Security.IpAllowList _allowList;
+    private readonly IpAllowList _allowList;
+    private readonly SessionLimiter _limiter;
     private readonly ILogger _logger;
 
-    public AllowListEndpointListenerFactory(IEndpointListenerFactory inner, Security.IpAllowList allowList, ILogger logger)
+    public AllowListEndpointListenerFactory(IEndpointListenerFactory inner, IpAllowList allowList, SessionLimiter limiter, ILogger logger)
     {
         _inner = inner;
         _allowList = allowList;
+        _limiter = limiter;
         _logger = logger;
     }
 
     public IEndpointListener CreateListener(IEndpointDefinition endpointDefinition)
-        => new AllowListEndpointListener(_inner.CreateListener(endpointDefinition), _allowList, _logger);
+        => new AllowListEndpointListener(_inner.CreateListener(endpointDefinition), _allowList, _limiter, _logger);
 }
 
 /// <summary>
-/// Listener che accetta le connessioni tramite quello interno e scarta quelle provenienti da IP
-/// non presenti nell'allowlist, continuando ad accettare le successive nello stesso ciclo di accept.
+/// Accepts connections through the inner listener and drops the ones that come from an address outside the
+/// allowlist, or that exceed the session limit, then keeps accepting in the same loop.
 /// </summary>
 public sealed class AllowListEndpointListener : IEndpointListener
 {
     private readonly IEndpointListener _inner;
-    private readonly Security.IpAllowList _allowList;
+    private readonly IpAllowList _allowList;
+    private readonly SessionLimiter _limiter;
     private readonly ILogger _logger;
+    private readonly ThrottledLog _refusedLog = new(TimeSpan.FromMinutes(1));
 
-    public AllowListEndpointListener(IEndpointListener inner, Security.IpAllowList allowList, ILogger logger)
+    public AllowListEndpointListener(IEndpointListener inner, IpAllowList allowList, SessionLimiter limiter, ILogger logger)
     {
         _inner = inner;
         _allowList = allowList;
+        _limiter = limiter;
         _logger = logger;
     }
 
@@ -51,18 +57,38 @@ public sealed class AllowListEndpointListener : IEndpointListener
             var pipe = await _inner.GetPipeAsync(context, cancellationToken).ConfigureAwait(false);
             var remote = GetRemoteEndPoint(context);
 
-            if (remote is null || _allowList.IsAllowed(remote.Address))
+            // Fail closed: a connection whose address is unknown is refused like one that is not allowed.
+            if (remote is null || !_allowList.IsAllowed(remote.Address))
             {
-                if (remote is not null)
-                    _logger.LogDebug("Connessione accettata da {RemoteIp}:{RemotePort}", remote.Address, remote.Port);
+                var key = remote?.Address.ToString() ?? "unknown";
+                if (_refusedLog.ShouldLog(key, out var suppressed))
+                {
+                    _logger.LogWarning(
+                        "Connection REFUSED: address {RemoteIp} is not in the allowlist ({Suppressed} more refused since the last entry).",
+                        key, suppressed);
+                }
+            }
+            else if (!_limiter.TryEnter(context))
+            {
+                if (_refusedLog.ShouldLog("limit", out var suppressed))
+                {
+                    _logger.LogWarning(
+                        "Connection from {RemoteIp} closed: the limit of {Max} concurrent sessions is reached ({Suppressed} more closed since the last entry).",
+                        remote.Address, _limiter.Maximum, suppressed);
+                }
+            }
+            else
+            {
+                _logger.LogDebug("Connection accepted from {RemoteIp}:{RemotePort}", remote.Address, remote.Port);
                 return pipe;
             }
 
-            _logger.LogWarning("Connessione RIFIUTATA: IP non consentito {RemoteIp}:{RemotePort}", remote.Address, remote.Port);
-            try { pipe.Dispose(); } catch { /* ignora */ }
+            try { pipe.Dispose(); } catch (Exception) { /* already closed by the peer */ }
 
-            // Rimuove la chiave per permettere al listener interno di reimpostarla alla prossima accept.
+            // The inner listener adds both keys again on the next accept and throws if one is still there:
+            // leaving either behind would make the NEXT connection fail and stay open without an answer.
             context.Properties.Remove(EndpointListener.RemoteEndPointKey);
+            context.Properties.Remove(EndpointListener.LocalEndPointKey);
         }
     }
 
@@ -72,4 +98,69 @@ public sealed class AllowListEndpointListener : IEndpointListener
             : null;
 
     public void Dispose() => _inner.Dispose();
+}
+
+/// <summary>Counts the sessions in progress and refuses new ones above the configured maximum.</summary>
+public sealed class SessionLimiter
+{
+    private const string CountedKey = "SmtpRelay:SessionCounted";
+    private int _current;
+
+    public SessionLimiter(int maximum) => Maximum = maximum;
+
+    public int Maximum { get; }
+    public int Current => Volatile.Read(ref _current);
+
+    public bool TryEnter(ISessionContext context)
+    {
+        if (Interlocked.Increment(ref _current) > Maximum)
+        {
+            Interlocked.Decrement(ref _current);
+            return false;
+        }
+        context.Properties[CountedKey] = true;
+        return true;
+    }
+
+    /// <summary>Called when a session ends, however it ends. Sessions that were never counted are ignored.</summary>
+    public void Exit(ISessionContext context)
+    {
+        if (context.Properties.Remove(CountedKey))
+            Interlocked.Decrement(ref _current);
+    }
+}
+
+/// <summary>
+/// Lets one entry per key through in each interval and counts the suppressed ones, so that a client that
+/// keeps knocking cannot flood the log.
+/// </summary>
+public sealed class ThrottledLog
+{
+    private const int MaxKeys = 2048;
+    private readonly TimeSpan _interval;
+    private readonly Dictionary<string, (DateTime Last, int Suppressed)> _state = new(StringComparer.Ordinal);
+    private readonly object _sync = new();
+
+    public ThrottledLog(TimeSpan interval) => _interval = interval;
+
+    public bool ShouldLog(string key, out int suppressed)
+    {
+        var now = DateTime.UtcNow;
+        lock (_sync)
+        {
+            if (_state.TryGetValue(key, out var entry) && now - entry.Last < _interval)
+            {
+                _state[key] = (entry.Last, entry.Suppressed + 1);
+                suppressed = 0;
+                return false;
+            }
+
+            if (_state.Count >= MaxKeys)
+                _state.Clear();
+
+            suppressed = entry.Suppressed;
+            _state[key] = (now, 0);
+            return true;
+        }
+    }
 }

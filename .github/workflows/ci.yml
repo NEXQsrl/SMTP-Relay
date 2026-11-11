@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Build
+        run: dotnet build SMTPRelay.slnx -c Release
+
+      - name: Test
+        run: dotnet test SMTPRelay.slnx -c Release --no-build
+
+      - name: Check for vulnerable packages
+        shell: pwsh
+        run: |
+          $report = dotnet list SMTPRelay.slnx package --vulnerable --include-transitive
+          $report
+          if ($LASTEXITCODE -ne 0) { throw 'Could not list the packages.' }
+          if (($report -join "`n") -cmatch '\b(Critical|High|Moderate|Low)\b') { throw 'A package with a known vulnerability is referenced.' }

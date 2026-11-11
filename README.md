@@ -1,317 +1,420 @@
-# SMTP Relay Service
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/brand/Logo_SmtpRelay_White.png">
+    <img src="assets/brand/Logo_SmtpRelay_Color.png" alt="NEXQ SMTP Relay" width="420">
+  </picture>
+</p>
 
-Relay SMTP aziendale come **servizio Windows**, scritto in C# / .NET 10.
+<h3 align="center">The SMTP relay Windows Server should have had.</h3>
 
-Riceve la posta da mittenti interni autorizzati (per IP) e la **inoltra** a uno smart host —
-tipicamente **Microsoft 365** con **OAuth2 (client credentials, app-only)** oppure un server
-SMTP qualsiasi con **autenticazione di base**. Pensato per scenari in cui applicazioni, stampanti
-o apparati di rete non possono usare l'autenticazione moderna e devono appoggiarsi a un relay centrale.
+<p align="center">
+  A modern replacement for the IIS 6 SMTP relay: printers, applications and devices keep sending plain SMTP,<br>
+  the relay forwards everything to Microsoft 365 with OAuth2, or to any SMTP server. One setup, one console, no scripts.
+</p>
 
----
+<p align="center">
+  <a href="https://github.com/NEXQsrl/SMTP-Relay/releases/latest"><b>Download the latest release</b></a> ·
+  <a href="#install-in-five-minutes">Install</a> ·
+  <a href="#features">Features</a> ·
+  <a href="#microsoft-365-setup">Microsoft 365</a> ·
+  <a href="README_IT.md">Italiano</a>
+</p>
 
-## Caratteristiche
+<p align="center">
+  <img alt="Version 2.0.0" src="https://img.shields.io/badge/version-2.0.0-2563eb">
+  <img alt="Windows Server and Windows 10/11" src="https://img.shields.io/badge/Windows-Server%202016%2B%20%7C%2010%20%7C%2011-0f766e">
+  <img alt="Microsoft 365 OAuth2" src="https://img.shields.io/badge/Microsoft%20365-OAuth2-7c3aed">
+  <img alt="Self-hosted" src="https://img.shields.io/badge/self--hosted-on%20premises-475569">
+  <img alt="No telemetry" src="https://img.shields.io/badge/telemetry-none-16a34a">
+  <a href="LICENSE"><img alt="License: PolyForm Shield 1.0.0 (source available)" src="https://img.shields.io/badge/license-PolyForm%20Shield%201.0.0-f59e0b"></a>
+</p>
 
-| Requisito | Implementazione |
-|-----------|-----------------|
-| Servizio Windows | Host generico .NET + `Microsoft.Extensions.Hosting.WindowsServices`, auto-restart su crash |
-| Porta di ascolto configurabile | `SmtpRelay:Listener:Port` (default 2525) |
-| Autenticazione in uscita | **Basic** (utente/password) **oppure Microsoft 365 OAuth2** (client credentials) |
-| Allowlist IP | Filtro **CIDR** (IPv4/IPv6) applicato **a livello di socket**: gli IP non consentiti vengono chiusi prima del banner SMTP |
-| Credenziali cifrate | **DPAPI** (scope LocalMachine) + entropia per-installazione, file con ACL ristretta a SYSTEM/Administrators |
-| Log con retention | **Serilog**, rotazione giornaliera + per dimensione, retention per numero file e per giorni; **audit trail** separato |
-| TLS in ingresso | **STARTTLS** opzionale/obbligatorio con certificato (file `.pfx` o store `LocalMachine\My`) |
-| Extra enterprise | Validazione fail-fast della config, retry con backoff, spool diagnostico dei falliti, limiti dimensione/destinatari, CLI di gestione e diagnostica |
+<p align="center">
+  <img src="assets/screenshots/overview.png" alt="SMTP Relay console: service state, messages delivered and failed today, configuration summary" width="900">
+</p>
 
----
+## Why SMTP Relay
 
-## Architettura in breve
+Multifunction printers, ERP systems, NAS boxes, monitoring tools and old line-of-business applications still send
+mail with plain SMTP, often without TLS and without modern authentication. Microsoft 365 no longer accepts that, and
+the usual answer, the IIS 6 SMTP service, is deprecated, has no OAuth2, and is managed from a console of 2003.
 
-```
-  App/Device interni                 SMTP Relay (servizio Windows)                 Smart host
-  ------------------                 -----------------------------                 ----------
-        │  SMTP (2525)                                                                  
-        ├───────────────►  [Gate IP/CIDR]  ──►  [Listener SMTP]  ──►  [Relay MailKit] ──► smtp.office365.com:587
-        │                   scarta IP non         EHLO/MAIL/RCPT       Basic  ┌── STARTTLS
-        │                   consentiti            DATA + limiti        M365   └── XOAUTH2 (token OAuth2)
-                                                        │
-                                                   [Audit + Log]  ── C:\ProgramData\SmtpRelay\logs
-                                                   [Secrets DPAPI] ─ C:\ProgramData\SmtpRelay\secrets.dat
-```
+SMTP Relay sits between those devices and your mail system:
 
-Librerie: `SmtpServer` (ricezione), `MailKit`/`MimeKit` (invio), `Microsoft.Identity.Client` (MSAL, token M365), `Serilog` (log).
+- **Devices stay as they are.** They send to the relay on port 25 (or the one you choose), with no password. The relay
+  decides who may send by IP address.
+- **Microsoft 365 with modern authentication.** The relay signs in with an app registration (OAuth2 client
+  credentials, XOAUTH2). No mailbox password is stored anywhere, and Basic authentication can stay disabled in the tenant.
+- **Or any other server.** User name and password over TLS, or no authentication for an Exchange connector that
+  trusts your public IP.
+- **Not an open relay by design.** An empty allowlist refuses everyone. A connection from an address that is not
+  allowed is closed before the SMTP greeting: the relay does not even reveal that it is a mail server.
+- **Secrets are encrypted.** Passwords and client secrets are protected with Windows DPAPI and are bound to the
+  computer. They are never written to the settings file and never shown again.
+- **You know what happened to every message.** One audit line per message (who, from, to, size, subject, outcome), a
+  rotating application log, the Windows event log, and a copy of every message that could not be delivered.
+- **A real setup and a real console.** A signed installer registers the service and the firewall rule. A graphical
+  console configures everything, tests the connection, shows the logs and installs updates from GitHub.
 
----
+## See it
 
-## Requisiti
+<table>
+  <tr>
+    <td width="50%"><img src="assets/screenshots/smarthost.png" alt="Smart host page"><br><b>Smart host</b>: Microsoft 365 with OAuth2, user name and password, or no authentication. The secret is stored encrypted with one click; <i>Test connection</i> and <i>Send a test message</i> use the settings on screen.</td>
+    <td width="50%"><img src="assets/screenshots/access.png" alt="Allowed senders page"><br><b>Allowed senders</b>: single addresses and CIDR networks, IPv4 and IPv6. Everything else is disconnected before the greeting.</td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="assets/screenshots/logs.png" alt="Logs page"><br><b>Logs</b>: the delivery audit trail and the application log, live, with a filter by address, subject or outcome.</td>
+    <td width="50%"><img src="assets/screenshots/about.png" alt="Updates page"><br><b>Updates</b>: the console finds a newer release on GitHub and installs it after checking its SHA-256 and the NEXQ signature. Settings are kept.</td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="assets/screenshots/tls.png" alt="Inbound TLS page"><br><b>Inbound TLS</b>: STARTTLS offered or required for clients, with a certificate from the Windows store or a .pfx file. TLS 1.2 minimum.</td>
+    <td width="50%"><img src="assets/screenshots/logging.png" alt="Logging and retention page"><br><b>Logging & retention</b>: detail level, rotation by day and by size, how long to keep logs and undelivered messages.</td>
+  </tr>
+</table>
 
-- Windows (10/11, Server 2016+)
-- **.NET 10 Runtime** sul server di destinazione (oppure pubblicare *self-contained*, vedi sotto)
-- Privilegi di **amministratore** per installare il servizio e impostare le credenziali
+<sub>The screenshots show the real interface of version 2.0.0 with sample data (addresses, tenants and messages are examples).</sub>
 
----
+## Features
 
-## Build e pubblicazione
+### Receiving
+- **SMTP listener** on the address and port you choose (25 by default), with limits on message size, recipients per
+  message, concurrent sessions and idle time.
+- **IP allowlist** with single addresses and CIDR networks (IPv4 and IPv6), applied at connection level. Fail-closed:
+  an empty list refuses every connection unless you explicitly turn that off.
+- **STARTTLS for clients**, optional or required, TLS 1.2 or 1.3 only, with a certificate from `LocalMachine\My`
+  (recommended) or a `.pfx` file whose password is kept in the encrypted store.
 
-Dalla cartella della soluzione:
+### Forwarding
+- **Microsoft 365** with OAuth2 client credentials (XOAUTH2). Tokens are cached and renewed automatically; a rotated
+  client secret is picked up without restarting the service.
+- **Any SMTP server** with user name and password, or **without authentication**.
+- **Encryption towards the smart host is enforced**: STARTTLS or implicit TLS. Credentials are never sent over a
+  connection that is not encrypted, even if the server stops offering STARTTLS, unless you explicitly allow it.
+- **Retries** with a growing delay on temporary errors. The client receives `250` when the smart host accepted the
+  message, `451` when it should try again, `554` when the message was refused for good.
+- **Fixed sender** (optional): replaces the envelope sender of every message, for servers that accept one address only.
 
-```powershell
-# Compilazione
-dotnet build -c Release
+### Security
+- **Encrypted secrets**: DPAPI (machine scope) plus a random per-installation key. The files are bound to the
+  computer and cannot be copied to another one.
+- **Protected data folder**: logs, undelivered messages and secrets are readable by SYSTEM and Administrators only.
+- **Signed binaries**: the setup, the uninstaller and every program file are signed by NEXQ S.r.l.
+- **Updates are verified**: SHA-256 from GitHub and the NEXQ signature, before anything is run.
+- **No telemetry.** The service contacts only your smart host (and Microsoft's sign-in service in Microsoft 365
+  mode). The console contacts GitHub only to look for a newer release, and you can turn that off.
 
-# Pubblicazione framework-dependent (richiede il runtime .NET 10 sul server)
-dotnet publish src/SmtpRelay.Service -c Release -o publish
+### Operations
+- **Graphical console** in English for every setting, with validation as you type and clear warnings (open relay,
+  credentials in clear text, missing secret).
+- **Delivery audit trail**: one line per message, in its own file, safe against log forging (line breaks in
+  subjects and addresses are removed).
+- **Logs** with daily and size rotation and automatic retention, plus warnings and errors in the Windows
+  Application event log (source `SmtpRelay`) for your monitoring system.
+- **Undelivered messages** saved as `.eml`, removed automatically after the number of days you choose.
+- **Command line** for automation: install, start, stop, credentials, connection test, configuration check.
+- **Automatic restart** of the service after a crash.
 
-# Oppure self-contained (nessun runtime da installare sul server)
-dotnet publish src/SmtpRelay.Service -c Release -r win-x64 --self-contained true -o publish
-```
+## Install in five minutes
 
-Nella cartella `publish` troverai `SmtpRelay.exe` e `appsettings.json`.
-È disponibile anche lo script `publish.ps1`.
+You need a Windows Server (or Windows 10/11) that your devices can reach, and administrator rights on it.
+Nothing else: the .NET runtime is included in the setup.
 
-Copia la cartella `publish` sul server, ad esempio in `C:\Program Files\SmtpRelay`.
+**1. Download** `SmtpRelay-Setup-2.0.0.exe` from the
+[latest release](https://github.com/NEXQsrl/SMTP-Relay/releases/latest). The release lists the SHA-256 of every file
+(`SHA256SUMS.txt`): check it with `Get-FileHash .\SmtpRelay-Setup-2.0.0.exe -Algorithm SHA256`.
 
----
-
-## Interfaccia grafica di configurazione (opzionale)
-
-Per non modificare a mano il JSON è disponibile un configuratore grafico in PowerShell:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\SmtpRelayConfigurator.ps1
-```
-
-Permette di: scegliere **quale** `appsettings.json` modificare (importante: quello **accanto a
-`SmtpRelay.exe`**), editare tutte le sezioni con menu/checkbox, **salvare i segreti cifrati** (valore
-passato via stdin, non finisce nella cronologia) e lanciare `test-upstream` / `show-config` /
-`install` / `start`. Esegui la GUI **come amministratore**.
-
-## Configurazione (`appsettings.json`)
-
-Tutta la configurazione è nella sezione `SmtpRelay`. I **segreti non stanno qui**: sono cifrati
-nello store (`secrets.dat`) e referenziati per nome.
-
-```jsonc
-{
-  "SmtpRelay": {
-    "ServiceName": "SmtpRelay",
-    "DataDirectory": "C:\\ProgramData\\SmtpRelay",
-
-    "Listener": {
-      "IpAddress": "0.0.0.0",        // interfaccia di ascolto
-      "Port": 2525,                  // porta di ascolto
-      "ServerName": "smtp-relay",
-      "MaxMessageSizeBytes": 26214400,
-      "MaxRecipients": 100,
-      "CommandTimeoutSeconds": 120
-    },
-
-    "Tls": {
-      "Mode": "None",                // None | StartTlsOptional | StartTlsRequired
-      "CertificatePath": "",         // percorso .pfx (alternativa a Thumbprint)
-      "CertificatePasswordSecret": "TlsCertPassword",
-      "CertificateThumbprint": "",   // certificato in LocalMachine\My
-      "MinimumProtocol": "Tls12"     // Tls12 | Tls13
-    },
-
-    "Security": {
-      "AllowedIps": [ "127.0.0.1", "::1", "192.168.10.0/24" ],
-      "RejectWhenAllowListEmpty": true   // fail-closed se la lista è vuota
-    },
-
-    "Upstream": {
-      "Mode": "Microsoft365",        // Basic | Microsoft365
-      "Host": "smtp.office365.com",
-      "Port": 587,
-      "Security": "StartTls",        // None | Auto | StartTls | StartTlsWhenAvailable | SslOnConnect
-      "TimeoutSeconds": 100,
-      "MaxAttempts": 3,
-      "RetryBaseDelaySeconds": 5,
-      "OverrideFromAddress": "",     // forza il return-path (opzionale)
-      "Basic": {
-        "Username": "relay@contoso.com",
-        "PasswordSecret": "UpstreamPassword"
-      },
-      "Microsoft365": {
-        "TenantId": "<tenant-guid>",
-        "ClientId": "<app-guid>",
-        "ClientSecretName": "M365ClientSecret",
-        "SenderUsername": "relay@contoso.com",
-        "Scope": "https://outlook.office365.com/.default"
-      }
-    },
-
-    "Logging": {
-      "Directory": "",               // vuoto => {DataDirectory}\logs
-      "RetainedFileCountLimit": 31,
-      "RetainedFileTimeLimitDays": 31,
-      "FileSizeLimitBytes": 52428800,
-      "MinimumLevel": "Information",
-      "Console": true,
-      "AuditTrail": true
-    },
-
-    "Delivery": {
-      "SpoolFailedMessages": true,
-      "FailedSpoolDirectory": ""     // vuoto => {DataDirectory}\failed
-    }
-  }
-}
-```
-
-> Ogni valore può essere sovrascritto anche via variabile d'ambiente con prefisso `SMTPRELAY_` e
-> separatore `__`, es. `SMTPRELAY_SmtpRelay__Listener__Port=25`.
-
-Verifica in qualsiasi momento la configurazione effettiva:
+**2. Trust the signature (once per server).** The files are signed by *NEXQ S.r.l.* with a self-signed certificate.
+Windows trusts it only after you import it. The public certificate is inside the signature of the file; extract it,
+check that its thumbprint is `989A5C82203AB19B6DB29FC447E8CB5EBEEB60D8`, then import it (elevated PowerShell):
 
 ```powershell
-SmtpRelay show-config
+$cert = (Get-AuthenticodeSignature .\SmtpRelay-Setup-2.0.0.exe).SignerCertificate
+$cert.Thumbprint          # must be 989A5C82203AB19B6DB29FC447E8CB5EBEEB60D8
+Export-Certificate -Cert $cert -FilePath .\NEXQ-CodeSigning.cer | Out-Null
+Import-Certificate -FilePath .\NEXQ-CodeSigning.cer -CertStoreLocation Cert:\LocalMachine\Root
+Import-Certificate -FilePath .\NEXQ-CodeSigning.cer -CertStoreLocation Cert:\LocalMachine\TrustedPublisher
 ```
 
----
+After this, Windows shows *Verified publisher: NEXQ S.r.l.* when you run the setup. See
+[Antivirus, SmartScreen and the signature](#antivirus-smartscreen-and-the-signature) if something still blocks it.
 
-## Gestione delle credenziali (cifrate)
+**3. Run the setup.** It installs the program in `C:\Program Files\NEXQ\SMTP Relay`, registers the Windows service
+*NEXQ SMTP Relay* (it does not start it yet), adds the firewall rule and opens the console.
 
-I segreti sono cifrati con **DPAPI (LocalMachine)** più un'entropia casuale per-installazione
-conservata in `entropy.bin` (ACL: solo SYSTEM/Administrators). Il blob risultante è legato alla
-macchina: copiato altrove non è decifrabile.
+**4. Configure.** In the console:
+
+| Page | What to set |
+|---|---|
+| **Allowed senders** | The IP addresses or networks of your devices, for example `192.168.10.0/24`. |
+| **Smart host** | *Microsoft 365* (see [below](#microsoft-365-setup)), or host, port and credentials of your server. Type the secret and press **Store**. |
+| **Listener** | The port, if 25 is not what you want. |
+
+Press **Test connection**, then **Send a test message**.
+
+**5. Start.** Press **Save and restart service** (or **Start** on the Overview page). The Overview page must show
+*Running*.
+
+**6. Point your devices** to the name or IP address of this server, port 25, no authentication, no TLS (or STARTTLS
+if you configured a certificate). Each message appears in the **Logs** page within seconds.
+
+> **Replacing the IIS SMTP service?** Two programs cannot listen on the same port. Stop and disable *Simple Mail
+> Transfer Protocol (SMTP)* in the Services console (or remove the SMTP Server feature) before starting the relay,
+> or run the relay on another port while you migrate. If the port is taken, the relay says so in its log and stops.
+
+### Unattended installation
 
 ```powershell
-# Imposta un segreto (verrà chiesto in modo mascherato se ometti --value)
-SmtpRelay set-credential --name M365ClientSecret --value "il-client-secret"
-SmtpRelay set-credential --name UpstreamPassword           # prompt mascherato
-SmtpRelay set-credential --name UpstreamPassword --stdin < pwd.txt
-
-SmtpRelay list-credentials       # elenca i nomi (mai i valori)
-SmtpRelay remove-credential --name M365ClientSecret
+.\SmtpRelay-Setup-2.0.0.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG="C:\Temp\smtprelay-setup.log"
 ```
 
-> Esegui `set-credential` **sullo stesso server** dove gira il servizio (la cifratura è per-macchina)
-> e con un utente amministratore, così il servizio (LocalSystem) potrà decifrare.
+Then copy your `appsettings.json` to the installation folder, store the secret and start the service:
 
----
+```powershell
+cd "C:\Program Files\NEXQ\SMTP Relay"
+.\SmtpRelay.exe set-credential --name M365ClientSecret      # asks for the value; or pipe it with --stdin
+.\SmtpRelay.exe test-upstream
+.\SmtpRelay.exe start
+```
 
-## Configurare Microsoft 365 (OAuth2 client credentials)
+### Requirements
 
-1. **Entra ID → App registrations → New registration** (single tenant). Annota **Directory (tenant) ID** e **Application (client) ID**.
-2. **Certificates & secrets → New client secret**. Copia il valore.
-3. **API permissions → Add a permission → APIs my organization uses →** *Office 365 Exchange Online* → **Application permissions** → aggiungi **`SMTP.SendAsApp`** → **Grant admin consent**.
-4. Abilita **SMTP AUTH** sulla casella mittente (Interfaccia di amministrazione Exchange → destinatari → cassetta postale → *Posta* → *Gestisci impostazioni app di posta* → attiva *SMTP autenticato*). In alternativa via PowerShell:
+| Component | Requirement |
+|---|---|
+| Operating system | Windows Server 2016 or later, Windows 10 or 11, 64-bit |
+| .NET | Nothing to install: the release is self-contained (.NET 10) |
+| Rights | Administrator, to install and to use the console |
+| Network, inbound | The listening port (25 by default) from your devices |
+| Network, outbound | Your smart host (Microsoft 365: `smtp.office365.com:587` and `login.microsoftonline.com:443`) |
+| Internet | Not required by the service beyond the smart host. The console contacts `api.github.com` for updates (optional) |
+
+## Microsoft 365 setup
+
+The relay signs in to Exchange Online as an application. You do this once, in about ten minutes.
+
+1. **Register the application.** In the [Microsoft Entra admin center](https://entra.microsoft.com) open
+   *App registrations > New registration*. Any name (for example `SMTP Relay`), single tenant, no redirect URI.
+   Note the **Application (client) ID** and the **Directory (tenant) ID**.
+2. **Add the permission.** *API permissions > Add a permission > APIs my organization uses >
+   Office 365 Exchange Online > Application permissions > `SMTP.SendAsApp`*. Then press **Grant admin consent**.
+3. **Create a client secret.** *Certificates & secrets > New client secret*. Copy the **Value** now: it is shown once.
+4. **Register the service principal in Exchange Online** and give it access to the sending mailbox
+   (Exchange Online PowerShell). The object ID is the one of the application under *Enterprise applications*, not the
+   one under *App registrations*:
+
    ```powershell
+   Connect-ExchangeOnline
+   New-ServicePrincipal -AppId <application-client-id> -ObjectId <enterprise-application-object-id>
+   Add-MailboxPermission -Identity relay@contoso.com -User <enterprise-application-object-id> -AccessRights FullAccess
    Set-CASMailbox -Identity relay@contoso.com -SmtpClientAuthenticationDisabled $false
    ```
-5. Configura `appsettings.json` (`Mode: "Microsoft365"`, `TenantId`, `ClientId`, `SenderUsername`) e salva il secret:
-   ```powershell
-   SmtpRelay set-credential --name M365ClientSecret --value "<secret>"
-   SmtpRelay test-upstream
-   ```
 
-`SenderUsername` è l'UPN della casella da cui il relay invia (usato per XOAUTH2 e come mittente
-predefinito quando il messaggio non ne indica uno).
+5. **Fill in the console**: tenant, client ID, sending mailbox, then type the client secret and press **Store**.
+   Press **Test connection**.
 
-## Configurare l'autenticazione di base
+Messages are sent as the sending mailbox. To let devices use other sender addresses, give the sending mailbox the
+*Send As* permission on them, or set **Always send as** in the console to rewrite the envelope sender.
 
-```jsonc
-"Upstream": { "Mode": "Basic", "Host": "smtp.tuoprovider.it", "Port": 587, "Security": "StartTls",
-              "Basic": { "Username": "relay@contoso.com", "PasswordSecret": "UpstreamPassword" } }
-```
-```powershell
-SmtpRelay set-credential --name UpstreamPassword --value "<password>"
-SmtpRelay test-upstream
-```
+Client secrets expire (24 months at most). When you create a new one, store it in the console: the running service
+uses it from the next message, with no restart.
 
----
+## Antivirus, SmartScreen and the signature
 
-## TLS in ingresso (STARTTLS)
+Every executable and library of SMTP Relay, the setup and the uninstaller are signed by **NEXQ S.r.l.** and
+time-stamped. The certificate is **self-signed**: it proves that the files come from NEXQ and were not altered, but
+no public authority vouches for it, so Windows and security products do not know it until you tell them.
 
-- `Mode: "None"` — traffico in chiaro (solo reti interne fidate).
-- `Mode: "StartTlsOptional"` — il relay offre STARTTLS; i client possono cifrare.
-- `Mode: "StartTlsRequired"` — `MAIL FROM` è rifiutato finché la sessione non è cifrata.
+| What you see | Why | What to do |
+|---|---|---|
+| *Unknown publisher* in the UAC prompt | The certificate is not trusted on this computer yet | Import it as in [step 2](#install-in-five-minutes). The prompt then shows *Verified publisher: NEXQ S.r.l.* |
+| *Windows protected your PC* (SmartScreen) | The file was downloaded from the Internet and has no reputation; a self-signed signature does not build any | *More info > Run anyway*, or first run `Unblock-File .\SmtpRelay-Setup-2.0.0.exe` after checking its SHA-256 |
+| *Access denied* when starting the setup or the programs, event 1121 of Microsoft Defender | The attack surface reduction rule *Block executable files from running unless they meet a prevalence, age, or trusted list criterion* blocks any new program | Add an exclusion (below), or in Microsoft Defender for Endpoint create an **Allow** indicator for the certificate |
+| The antivirus quarantines or blocks a file | Heuristics on a new, rarely seen program that listens on a port | Check the SHA-256 against the release, then allow the publisher certificate or exclude the installation folder |
 
-Certificato da file:
-```powershell
-SmtpRelay set-credential --name TlsCertPassword --value "<password-pfx>"
-# appsettings: Tls.Mode="StartTlsOptional", Tls.CertificatePath="C:\\certs\\relay.pfx"
-```
-oppure dallo store: imposta `Tls.CertificateThumbprint` con un certificato presente in `LocalMachine\My`.
-
----
-
-## Allowlist IP
-
-Solo gli IP/reti elencati in `Security.AllowedIps` possono contattare il relay. Supporta IP singoli
-e CIDR, IPv4 e IPv6 (`192.168.10.0/24`, `10.0.0.0/8`, `2001:db8::/32`, `127.0.0.1`, `::1`).
-Le connessioni da IP non consentiti vengono **chiuse immediatamente**, prima di ricevere il banner SMTP,
-e registrate come `Connessione RIFIUTATA`. Con lista vuota e `RejectWhenAllowListEmpty=true` il relay
-è **fail-closed** (rifiuta tutto).
-
----
-
-## Installazione come servizio Windows
-
-Da un terminale **come amministratore**, nella cartella pubblicata:
+Exclusion for the Microsoft Defender attack surface reduction rules (elevated PowerShell; the first line is needed
+only while you run the setup):
 
 ```powershell
-.\SmtpRelay.exe install          # crea il servizio (avvio automatico, restart su crash)
-.\SmtpRelay.exe start
-.\SmtpRelay.exe status
-.\SmtpRelay.exe stop
-.\SmtpRelay.exe uninstall
+Add-MpPreference -AttackSurfaceReductionOnlyExclusions "C:\Install\SmtpRelay-Setup-2.0.0.exe"
+Add-MpPreference -AttackSurfaceReductionOnlyExclusions "C:\Program Files\NEXQ\SMTP Relay"
 ```
 
-Account del servizio: default **LocalSystem** (può decifrare i segreti e accedere a `ProgramData`).
-Per usare un account dedicato / **gMSA**:
+For many servers, distribute the certificate with a Group Policy: *Computer Configuration > Policies > Windows
+Settings > Security Settings > Public Key Policies*, import `NEXQ-CodeSigning.cer` (attached to every release) into
+both **Trusted Root Certification Authorities** and **Trusted Publishers**.
+
+Always verify before you trust: the thumbprint must be `989A5C82203AB19B6DB29FC447E8CB5EBEEB60D8`
+(SHA-256 `C03E2BA2CF4C3F22776CF744D32261289B7E586C70B9CA8FC7846B578C8AB3E7`). Importing a certificate into *Trusted Root* is
+a security decision: do it only for a certificate whose thumbprint you checked against this page.
+
+## How it works
+
+```mermaid
+flowchart LR
+    devices["Printers, applications,<br/>devices, scripts"]
+    subgraph server["Your Windows server"]
+        gate["IP allowlist<br/>(closed before the greeting)"]
+        relay["SMTP Relay service<br/>limits, STARTTLS, audit"]
+        secrets[("Encrypted secrets<br/>DPAPI")]
+        console["Management console"]
+        gate --> relay
+        relay --- secrets
+        console -. "settings, secrets,<br/>start / stop, logs" .- relay
+    end
+    m365["Microsoft 365<br/>smtp.office365.com"]
+    other["Any SMTP server"]
+    devices -- "SMTP, port 25" --> gate
+    relay -- "STARTTLS + OAuth2 (XOAUTH2)" --> m365
+    relay -- "TLS + password, or anonymous" --> other
+```
+
+- The **service** (`SmtpRelay.exe`) accepts a message only from an allowed address, forwards it at once and answers
+  the client with the outcome. It keeps no queue: when the smart host is unreachable the client receives `451` and
+  retries, and a copy of the message is saved as `.eml`.
+- The **console** (`SmtpRelayManager.exe`) edits `appsettings.json`, stores secrets, controls the service and reads
+  the logs. It always runs as administrator.
+- **Settings** are in `C:\Program Files\NEXQ\SMTP Relay\appsettings.json`. **Data** (logs, secrets, undelivered
+  messages) is in `C:\ProgramData\SmtpRelay`. Updates and repairs never touch either.
+
+## Logs
+
+Everything is under `C:\ProgramData\SmtpRelay\logs` (the folder can be changed), and in the **Logs** page of the console.
+
+| File | Content |
+|---|---|
+| `audit-YYYYMMDD.log` | One line per message: `DELIVERED` or `FAILED`, client address, sender, recipients, size, subject, duration or reason |
+| `smtp-relay-YYYYMMDD.log` | Application log: start and stop, refused connections, retries, errors with details |
+| `manager-YYYYMM.log` | What administrators did in the console: settings saved, secrets changed, service started or stopped, updates |
+| Windows event log | Warnings and errors, log *Application*, source `SmtpRelay` |
+| `..\failed\*.eml` | A copy of each message that was not delivered, for diagnosis or to send it again by hand |
+
+```
+2026-11-11 10:38:40.106 +01:00 DELIVERED client=10.20.4.12 from=erp@contoso.com to=orders@fabrikam.com size=24110 subject=Order confirmation 55012 durationMs=655
+2026-11-11 10:42:07.118 +01:00 FAILED client=192.168.10.44 from=scanner@contoso.com to=m.rossi@fabrikam.com size=4821330 subject=Scan 0042 permanent=True reason=5.7.60 Client does not have permissions to send as this sender
+```
+
+A new file starts every day and when the size limit is reached; files older than the retention are deleted
+automatically (31 days by default). Subjects are part of the audit line: if that is not acceptable in your
+organization, restrict access to the folder further or turn the audit trail off.
+
+## Configuration reference
+
+The console writes `appsettings.json` for you. Every setting can also be set with an environment variable
+`SMTPRELAY_SmtpRelay__<Section>__<Name>`. Changes are read when the service starts.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `Listener.IpAddress` / `Port` | `0.0.0.0` / `25` | Where the relay listens |
+| `Listener.ServerName` | `smtp-relay` | Name in the SMTP greeting |
+| `Listener.MaxMessageSizeBytes` | `26214400` | Largest message accepted (25 MB) |
+| `Listener.MaxRecipients` | `100` | Recipients per message |
+| `Listener.MaxConcurrentSessions` | `50` | Sessions served at the same time |
+| `Security.AllowedIps` | `127.0.0.1`, `::1` | Addresses and CIDR networks allowed to send |
+| `Security.RejectWhenAllowListEmpty` | `true` | Empty list refuses everyone |
+| `Tls.Mode` | `None` | `None`, `StartTlsOptional`, `StartTlsRequired` |
+| `Tls.CertificateThumbprint` / `CertificatePath` | empty | Certificate for STARTTLS |
+| `Upstream.Mode` | `Microsoft365` | `Microsoft365`, `Basic`, `Anonymous` |
+| `Upstream.Host` / `Port` / `Security` | `smtp.office365.com` / `587` / `StartTls` | The smart host. Security: `StartTls`, `SslOnConnect`, `Auto`, `StartTlsWhenAvailable`, `None` |
+| `Upstream.AllowInsecureAuthentication` | `false` | Allow credentials over a connection that may be in clear text |
+| `Upstream.MaxAttempts` / `RetryBaseDelaySeconds` | `3` / `5` | Retries on temporary errors |
+| `Upstream.OverrideFromAddress` | empty | Fixed envelope sender |
+| `Upstream.Microsoft365.*` | | `TenantId`, `ClientId`, `SenderUsername`, `ClientSecretName` |
+| `Upstream.Basic.*` | | `Username`, `PasswordSecret` |
+| `Logging.MinimumLevel` | `Information` | `Verbose` to `Fatal` |
+| `Logging.RetainedFileTimeLimitDays` / `RetainedFileCountLimit` | `31` / `31` | Retention |
+| `Logging.AuditTrail` / `EventLog` | `true` / `true` | Audit file and Windows event log |
+| `Delivery.SpoolFailedMessages` / `FailedSpoolRetentionDays` | `true` / `30` | Copies of undelivered messages |
+| `Updates.CheckOnStartup` | `true` | The console looks for a newer release when it opens |
+
+Secrets (`M365ClientSecret`, `UpstreamPassword`, `TlsCertPassword`) are never in this file: the settings only
+contain the *name* of the secret, the value is in the encrypted store.
+
+### Command line
+
+`SmtpRelay.exe` in the installation folder (elevated prompt):
+
+| Command | What it does |
+|---|---|
+| `install [--account <user> --password-stdin]` | Registers or repairs the service (LocalSystem by default), protects the data folder |
+| `uninstall` | Removes the service |
+| `start` · `stop` · `restart` · `status` | Controls the service (`status` returns 0 when it is running) |
+| `set-credential --name <name> [--stdin]` | Stores a secret, encrypted |
+| `remove-credential --name <name>` · `list-credentials` | Removes a secret · lists the names (never the values) |
+| `test-upstream` | Connects and signs in to the smart host |
+| `show-config` | Shows the effective configuration, warnings and errors |
+
+## Updating and removing
+
+**Updating.** When a newer release is on GitHub the console shows *Update available*. *About & updates > Download
+and install* downloads the setup, compares its SHA-256 with the one published by GitHub, checks that it is signed
+by NEXQ S.r.l., then installs it: the relay stops for about a minute and starts again. Settings, secrets and logs are
+kept. You can also run a newer setup by hand; the result is the same.
+
+**Removing.** *Settings > Apps* (or *Programs and Features*) > *NEXQ SMTP Relay* > *Uninstall*. The service and the
+firewall rule are removed. The setup asks whether to delete settings, secrets and logs too; by default they are kept.
+
+## Project status
+
+Version 2.0.0 is the first release with the setup, the console and the update mechanism. The relay itself (allowlist,
+limits, forwarding, retries, audit, secrets) and the verification of updates are covered by an automated test suite
+that runs the real listener against a test smart host. The setup, the service registration, the firewall rule and
+the update from the console have been built and verified as signed packages, but **have not yet been validated end to
+end on every supported Windows version**: install on a test server first, and keep your previous relay until you
+have seen your devices deliver through this one. SMTP Relay has not had an independent security review.
+
+Do not expose the listening port to the Internet. The relay is meant for an internal network, behind your firewall.
+
+## Building from source
+
+Prerequisites: Windows, .NET SDK 10, and [Inno Setup 6](https://jrsoftware.org/isinfo.php) for the setup.
 
 ```powershell
-.\SmtpRelay.exe install --account "CONTOSO\svc-smtprelay$"        # gMSA (senza password)
-.\SmtpRelay.exe install --account "CONTOSO\svc-smtprelay" --password "<pwd>"
-```
-> Con un account dedicato, imposta le credenziali **dopo** aver deciso l'account e assicurati che
-> abbia accesso a `DataDirectory`.
+dotnet build SMTPRelay.slnx
+dotnet test SMTPRelay.slnx
+dotnet run --project src/SmtpRelay.Service                 # the relay in the console, on port 2525
+dotnet run --project src/SmtpRelay.Manager                 # the management console (Debug: not elevated)
 
-Apri la porta nel firewall se necessario:
-```powershell
-New-NetFirewallRule -DisplayName "SMTP Relay 2525" -Direction Inbound -Protocol TCP -LocalPort 2525 -Action Allow
+# release: self-contained binaries, signatures, setup, zip and checksums in artifacts\release
+dotnet msbuild build\Release.proj -restore -t:Release -p:SignThumbprint=<thumbprint of your code signing certificate>
 ```
 
----
+| Folder | Content |
+|---|---|
+| `src/SmtpRelay.Core` | Configuration, validation, secrets, allowlist, delivery to the smart host |
+| `src/SmtpRelay.Service` | The Windows service and the command line |
+| `src/SmtpRelay.Manager` | The management console (WPF) |
+| `tests/SmtpRelay.Tests` | Unit and end-to-end tests |
+| `installer` · `build` | Inno Setup script · release build |
 
-## Log e retention
+## Security
 
-- Cartella: `{DataDirectory}\logs` (default `C:\ProgramData\SmtpRelay\logs`).
-- `smtp-relay-YYYYMMDD.log` — log applicativo. `audit-YYYYMMDD.log` — solo eventi di consegna
-  (`DELIVERED` / `FAILED` con IP client, mittente, destinatari, dimensione, oggetto, durata, esito).
-- Rotazione **giornaliera** e **per dimensione** (`FileSizeLimitBytes`); retention per numero file
-  (`RetainedFileCountLimit`) e per giorni (`RetainedFileTimeLimitDays`).
+Fail-closed allowlist, encryption enforced towards the smart host, secrets encrypted and bound to the computer, a data
+folder closed to ordinary users, signed binaries, verified updates, no telemetry. The details and the limits are in
+[SECURITY.md](SECURITY.md). **To report a vulnerability, do not open a public issue**: follow [SECURITY.md](SECURITY.md).
 
----
+## Contributing
 
-## Diagnostica
+Read [CONTRIBUTING.md](CONTRIBUTING.md) first. In short: never weaken a fail-closed default, never write a secret
+or a message body to a log, keep every text of the interface in clear English, and add a test for what you change.
 
-```powershell
-SmtpRelay show-config       # configurazione effettiva + validazione
-SmtpRelay test-upstream     # verifica connessione + autenticazione verso l'upstream
-SmtpRelay help
-```
+## License
 
-In caso di fallimento definitivo di consegna, se `Delivery.SpoolFailedMessages=true`, una copia
-`.eml` viene salvata in `{DataDirectory}\failed` a scopo diagnostico (non viene reinviata).
+SMTP Relay is developed by [NEXQ](https://www.nexq.it/?utm_source=github&utm_medium=referral&utm_campaign=smtprelay) and
+released under the **[PolyForm Shield License 1.0.0](https://polyformproject.org/licenses/shield/1.0.0)**
+([LICENSE](LICENSE)), a standard source-available license:
 
----
+- **Free for personal and business use**, including production use in companies, with no limit on servers, devices,
+  mailboxes or messages.
+- **The source code is publicly available**: you can study it, modify it and build on it, and distribute copies with
+  the license and the `Required Notice` line.
+- **Reselling SMTP Relay is not allowed**: the license forbids providing any product that competes with it, so
+  selling it, selling modified or renamed versions, or offering it as a competing product or service is not allowed.
+- **Additional commercial rights**: contact NEXQ through [www.nexq.it](https://www.nexq.it/?utm_source=github&utm_medium=referral&utm_campaign=smtprelay).
 
-## Note di sicurezza
+It is not an OSI-approved open-source license (GitHub shows it as "Other"). Third-party components keep their own
+licenses: see [NOTICE](NOTICE).
 
-- I segreti non compaiono mai nei log né in `appsettings.json`; sono cifrati con DPAPI per-macchina.
-- `entropy.bin` e `secrets.dat` hanno ACL ristretta a SYSTEM/Administrators.
-- La cifratura è **legata alla macchina**: per migrare il relay, reimposta le credenziali sul nuovo host.
-- In produzione usa `Tls.Mode` almeno `StartTlsOptional` e mantieni l'allowlist il più stretta possibile.
-- Verso Microsoft 365 il canale è sempre cifrato (STARTTLS) e l'autenticazione usa token OAuth2 a breve durata.
+Copyright (c) NEXQ S.r.l. · [www.nexq.it](https://www.nexq.it/?utm_source=github&utm_medium=referral&utm_campaign=smtprelay)
 
----
-
-## Comportamento SMTP
-
-- Consegna riuscita → `250`.
-- Errore **transitorio** upstream (rete/connessione, 4xx) → `451` (il client può ritentare); retry
-  interni con backoff lineare fino a `MaxAttempts`.
-- Errore **permanente** (auth/5xx) → `554`.
-- Messaggio oltre il limite dichiarato (`SIZE=` in `MAIL FROM`) → `552`; il limite è comunque annunciato in EHLO. Troppi destinatari → `RCPT` rifiutato.
+"Microsoft 365", "Exchange", "Windows Server" and "Microsoft Entra" are trademarks of the Microsoft group of
+companies. SMTP Relay is an independent project and is not affiliated with or endorsed by Microsoft.

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.Versioning;
 using System.Text;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -7,14 +8,18 @@ using SmtpRelay.Security;
 
 namespace SmtpRelay.Cli;
 
-/// <summary>Gestisce i comandi di amministrazione della CLI.</summary>
+/// <summary>Administration commands of the CLI.</summary>
 [SupportedOSPlatform("windows")]
 public static class CommandLineHandler
 {
+    private const string ServiceDisplayName = "NEXQ SMTP Relay";
+    private const string ServiceDescription =
+        "Accepts mail from allowed internal senders and forwards it to Microsoft 365 or to an SMTP smart host.";
+
     private static readonly string[] Verbs =
     {
-        "help", "--help", "-h", "/?",
-        "install", "uninstall", "start", "stop", "status",
+        "help", "--help", "-h", "/?", "version", "--version",
+        "install", "uninstall", "start", "stop", "restart", "status",
         "set-credential", "remove-credential", "list-credentials",
         "test-upstream", "show-config"
     };
@@ -31,10 +36,12 @@ public static class CommandLineHandler
             return verb switch
             {
                 "help" or "--help" or "-h" or "/?" => PrintHelp(),
+                "version" or "--version" => PrintVersion(),
                 "install" => Install(options, map),
                 "uninstall" => RequireAdmin() ?? ServiceControl.Uninstall(options.ServiceName),
                 "start" => RequireAdmin() ?? ServiceControl.Start(options.ServiceName),
                 "stop" => RequireAdmin() ?? ServiceControl.Stop(options.ServiceName),
+                "restart" => RequireAdmin() ?? Restart(options.ServiceName),
                 "status" => ServiceControl.Status(options.ServiceName),
                 "set-credential" => SetCredential(options, map),
                 "remove-credential" => RemoveCredential(options, map),
@@ -46,7 +53,7 @@ public static class CommandLineHandler
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine("Errore: " + ex.Message);
+            Console.Error.WriteLine("Error: " + ex.Message);
             return 1;
         }
     }
@@ -57,41 +64,85 @@ public static class CommandLineHandler
         if (admin is not null)
             return admin.Value;
 
+        if (!RelayOptionsValidator.IsValidName(options.ServiceName))
+        {
+            Console.Error.WriteLine("ServiceName in appsettings.json is not valid.");
+            return 2;
+        }
+
         map.TryGetValue("account", out var account);
         map.TryGetValue("password", out var password);
-        return ServiceControl.Install(
-            options.ServiceName,
-            displayName: "SMTP Relay Service",
-            description: "SMTP Relay aziendale con allowlist IP, TLS e inoltro autenticato (Basic/Microsoft 365).",
-            account: account,
-            accountPassword: password);
+        if (map.ContainsKey("password-stdin"))
+            password = Console.In.ReadLine();
+
+        var code = ServiceControl.Install(options.ServiceName, ServiceDisplayName, ServiceDescription, account, password);
+        if (code != 0)
+            return code;
+
+        // Close the data folder to ordinary users (logs and the failed-message spool contain mail data).
+        var serviceAccount = ServiceControl.GetAccount(options.ServiceName);
+        try
+        {
+            WindowsAcl.HardenDataDirectory(options.DataDirectory, serviceAccount);
+            if (WindowsAcl.ResolveAccount(serviceAccount) is null &&
+                !serviceAccount.Equals("LocalSystem", StringComparison.OrdinalIgnoreCase))
+            {
+                Console.Error.WriteLine($"Warning: the account '{serviceAccount}' could not be resolved. " +
+                                        $"Give it Modify rights on {options.DataDirectory} yourself.");
+            }
+            else
+            {
+                Console.WriteLine($"Data folder protected: {options.DataDirectory}");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Warning: cannot restrict the permissions of {options.DataDirectory}: {ex.Message}");
+        }
+
+        try
+        {
+            if (!EventLog.SourceExists(LoggingSetup.EventLogSource))
+                EventLog.CreateEventSource(LoggingSetup.EventLogSource, "Application");
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Warning: cannot register the event log source: {ex.Message}");
+        }
+
+        return 0;
+    }
+
+    private static int Restart(string serviceName)
+    {
+        var code = ServiceControl.Stop(serviceName);
+        return code != 0 ? code : ServiceControl.Start(serviceName);
     }
 
     private static int SetCredential(RelayOptions options, Dictionary<string, string> map)
     {
-        if (!map.TryGetValue("name", out var name) || string.IsNullOrWhiteSpace(name))
+        if (!map.TryGetValue("name", out var name) || !RelayOptionsValidator.IsValidName(name))
         {
-            Console.Error.WriteLine("Uso: SmtpRelay set-credential --name <nome> [--value <segreto> | --stdin]");
+            Console.Error.WriteLine("Usage: SmtpRelay set-credential --name <name> [--stdin | --value <secret>]");
             return 2;
         }
 
         string value;
         if (map.TryGetValue("value", out var v))
             value = v;
-        else if (map.ContainsKey("stdin"))
+        else if (map.ContainsKey("stdin") || Console.IsInputRedirected)
             value = Console.In.ReadToEnd().TrimEnd('\r', '\n');
         else
-            value = ReadMasked($"Inserisci il valore per '{name}': ");
+            value = ReadMasked($"Enter the value for '{name}': ");
 
         if (string.IsNullOrEmpty(value))
         {
-            Console.Error.WriteLine("Valore vuoto: operazione annullata.");
+            Console.Error.WriteLine("Empty value: nothing was saved.");
             return 2;
         }
 
-        var secrets = BuildSecretStore(options);
-        secrets.Set(name, value);
-        Console.WriteLine($"Segreto '{name}' cifrato e salvato in {options.SecretsFilePath}");
+        SecretStore.Open(options).Set(name, value);
+        Console.WriteLine($"Secret '{name}' encrypted and saved in {options.SecretsFilePath}");
         return 0;
     }
 
@@ -99,110 +150,115 @@ public static class CommandLineHandler
     {
         if (!map.TryGetValue("name", out var name) || string.IsNullOrWhiteSpace(name))
         {
-            Console.Error.WriteLine("Uso: SmtpRelay remove-credential --name <nome>");
+            Console.Error.WriteLine("Usage: SmtpRelay remove-credential --name <name>");
             return 2;
         }
 
-        var secrets = BuildSecretStore(options);
-        Console.WriteLine(secrets.Remove(name)
-            ? $"Segreto '{name}' rimosso."
-            : $"Segreto '{name}' non trovato.");
+        Console.WriteLine(SecretStore.Open(options).Remove(name)
+            ? $"Secret '{name}' removed."
+            : $"Secret '{name}' not found.");
         return 0;
     }
 
     private static int ListCredentials(RelayOptions options)
     {
-        var secrets = BuildSecretStore(options);
-        var names = secrets.Names;
+        var names = SecretStore.Open(options).Names;
         if (names.Count == 0)
         {
-            Console.WriteLine("Nessun segreto salvato.");
+            Console.WriteLine("No secret stored.");
             return 0;
         }
 
-        Console.WriteLine("Segreti salvati (i valori non vengono mostrati):");
-        foreach (var n in names.OrderBy(x => x))
+        Console.WriteLine("Stored secrets (values are never shown):");
+        foreach (var n in names)
             Console.WriteLine("  - " + n);
         return 0;
     }
 
     private static async Task<int> TestUpstreamAsync(RelayOptions options)
     {
-        var secrets = BuildSecretStore(options);
+        var errors = RelayOptionsValidator.Validate(options);
+        if (errors.Count > 0)
+        {
+            Console.Error.WriteLine("The configuration is not valid:");
+            foreach (var error in errors)
+                Console.Error.WriteLine("  - " + error);
+            return 2;
+        }
+
+        var secrets = SecretStore.Open(options);
         var tokenProvider = new Microsoft365TokenProvider(
             options.Upstream.Microsoft365, secrets, NullLogger<Microsoft365TokenProvider>.Instance);
         var sender = new UpstreamSender(
             options.Upstream, secrets, tokenProvider, NullLogger<UpstreamSender>.Instance);
 
-        Console.WriteLine($"Test connessione verso {options.Upstream.Host}:{options.Upstream.Port} " +
-                          $"(modalita {options.Upstream.Mode}, sicurezza {options.Upstream.Security})...");
+        Console.WriteLine($"Testing {options.Upstream.Host}:{options.Upstream.Port} " +
+                          $"(authentication {options.Upstream.Mode}, security {options.Upstream.Security})...");
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(options.Upstream.TimeoutSeconds + 10));
         try
         {
             await sender.VerifyConnectionAsync(cts.Token);
-            Console.WriteLine("OK: connessione e autenticazione riuscite.");
+            Console.WriteLine(options.Upstream.Mode == UpstreamAuthMode.Anonymous
+                ? "OK: connection succeeded."
+                : "OK: connection and authentication succeeded.");
             return 0;
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine("FALLITO: " + ex.Message);
+            Console.Error.WriteLine("FAILED: " + ex.Message);
             if (ex.InnerException is not null)
-                Console.Error.WriteLine("Dettaglio: " + ex.InnerException.Message);
+                Console.Error.WriteLine("Detail: " + ex.InnerException.Message);
             return 1;
         }
     }
 
     private static int ShowConfig(RelayOptions o)
     {
-        var secrets = BuildSecretStore(o);
+        var secrets = SecretStore.Open(o);
         var sb = new StringBuilder();
-        sb.AppendLine("=== Configurazione effettiva ===");
+        sb.AppendLine($"=== {AppInfo.ProductName} {AppInfo.Version} - effective configuration ===");
         sb.AppendLine($"ServiceName          : {o.ServiceName}");
         sb.AppendLine($"DataDirectory        : {o.DataDirectory}");
-        sb.AppendLine($"Listener             : {o.Listener.IpAddress}:{o.Listener.Port} (server '{o.Listener.ServerName}')");
-        sb.AppendLine($"MaxMessageSize       : {o.Listener.MaxMessageSizeBytes} byte, MaxRecipients={o.Listener.MaxRecipients}");
-        sb.AppendLine($"TLS ingresso         : {o.Tls.Mode} (min {o.Tls.MinimumProtocol})");
-        sb.AppendLine($"IP consentiti        : {(o.Security.AllowedIps.Count == 0 ? "(vuoto)" : string.Join(", ", o.Security.AllowedIps))}");
+        sb.AppendLine($"Listener             : {o.Listener.IpAddress}:{o.Listener.Port} (server name '{o.Listener.ServerName}')");
+        sb.AppendLine($"Limits               : {o.Listener.MaxMessageSizeBytes} bytes per message, {o.Listener.MaxRecipients} recipients, {o.Listener.MaxConcurrentSessions} sessions");
+        sb.AppendLine($"Inbound TLS          : {o.Tls.Mode} (minimum {o.Tls.MinimumProtocol})");
+        sb.AppendLine($"Allowed IPs          : {(o.Security.AllowedIps.Count == 0 ? "(empty)" : string.Join(", ", o.Security.AllowedIps))}");
         sb.AppendLine($"Upstream             : {o.Upstream.Mode} -> {o.Upstream.Host}:{o.Upstream.Port} ({o.Upstream.Security})");
-        if (o.Upstream.Mode == UpstreamAuthMode.Basic)
+        switch (o.Upstream.Mode)
         {
-            sb.AppendLine($"  Username           : {o.Upstream.Basic.Username}");
-            sb.AppendLine($"  Password           : {(secrets.Contains(o.Upstream.Basic.PasswordSecret) ? "[impostata]" : "[MANCANTE]")} (segreto '{o.Upstream.Basic.PasswordSecret}')");
+            case UpstreamAuthMode.Basic:
+                sb.AppendLine($"  Username           : {o.Upstream.Basic.Username}");
+                sb.AppendLine($"  Password           : {(secrets.Contains(o.Upstream.Basic.PasswordSecret) ? "[set]" : "[MISSING]")} (secret '{o.Upstream.Basic.PasswordSecret}')");
+                break;
+            case UpstreamAuthMode.Microsoft365:
+                sb.AppendLine($"  TenantId           : {o.Upstream.Microsoft365.TenantId}");
+                sb.AppendLine($"  ClientId           : {o.Upstream.Microsoft365.ClientId}");
+                sb.AppendLine($"  SenderUsername     : {o.Upstream.Microsoft365.SenderUsername}");
+                sb.AppendLine($"  ClientSecret       : {(secrets.Contains(o.Upstream.Microsoft365.ClientSecretName) ? "[set]" : "[MISSING]")} (secret '{o.Upstream.Microsoft365.ClientSecretName}')");
+                break;
         }
-        else
-        {
-            sb.AppendLine($"  TenantId           : {o.Upstream.Microsoft365.TenantId}");
-            sb.AppendLine($"  ClientId           : {o.Upstream.Microsoft365.ClientId}");
-            sb.AppendLine($"  SenderUsername     : {o.Upstream.Microsoft365.SenderUsername}");
-            sb.AppendLine($"  ClientSecret       : {(secrets.Contains(o.Upstream.Microsoft365.ClientSecretName) ? "[impostato]" : "[MANCANTE]")} (segreto '{o.Upstream.Microsoft365.ClientSecretName}')");
-        }
-        sb.AppendLine($"Log                  : {o.LogDirectory} (retention {o.Logging.RetainedFileCountLimit} file / {o.Logging.RetainedFileTimeLimitDays} giorni)");
-        sb.AppendLine($"Spool falliti        : {o.FailedSpoolDirectory}");
+        sb.AppendLine($"Logs                 : {o.LogDirectory} (keep {o.Logging.RetainedFileCountLimit} files / {o.Logging.RetainedFileTimeLimitDays?.ToString() ?? "unlimited"} days)");
+        sb.AppendLine($"Failed-message spool : {(o.Delivery.SpoolFailedMessages ? o.FailedSpoolDirectory : "(off)")}");
 
-        var validation = new RelayOptionsValidator().Validate(null, o);
+        var errors = RelayOptionsValidator.Validate(o);
+        var warnings = RelayOptionsValidator.Warnings(o);
         sb.AppendLine();
-        sb.AppendLine(validation.Succeeded
-            ? "Validazione          : OK"
-            : "Validazione          : ERRORI\n  - " + string.Join("\n  - ", validation.Failures ?? Array.Empty<string>()));
+        if (warnings.Count > 0)
+            sb.AppendLine("Warnings             :\n  - " + string.Join("\n  - ", warnings));
+        sb.AppendLine(errors.Count == 0
+            ? "Validation           : OK"
+            : "Validation           : ERRORS\n  - " + string.Join("\n  - ", errors));
 
         Console.WriteLine(sb.ToString());
-        return validation.Succeeded ? 0 : 2;
-    }
-
-    private static SecretStore BuildSecretStore(RelayOptions options)
-    {
-        Directory.CreateDirectory(options.DataDirectory);
-        var entropy = MachineKey.LoadOrCreate(options.EntropyFilePath);
-        var protector = new SecretProtector(entropy);
-        return new SecretStore(options.SecretsFilePath, protector);
+        return errors.Count == 0 ? 0 : 2;
     }
 
     private static int? RequireAdmin()
     {
-        if (ServiceControl.IsAdministrator())
+        if (WindowsAcl.IsAdministrator())
             return null;
-        Console.Error.WriteLine("Questo comando richiede privilegi di amministratore. Esegui il terminale come amministratore.");
+        Console.Error.WriteLine("This command needs administrator rights. Open the terminal as administrator.");
         return 5;
     }
 
@@ -212,17 +268,15 @@ public static class CommandLineHandler
         for (int i = 1; i < args.Length; i++)
         {
             var a = args[i];
-            if (!a.StartsWith("--"))
+            if (!a.StartsWith("--", StringComparison.Ordinal))
                 continue;
             var key = a[2..];
-            if (i + 1 < args.Length && !args[i + 1].StartsWith("--"))
-            {
+            // The value of --value / --password may itself start with "--".
+            bool takesValue = key is "name" or "value" or "account" or "password";
+            if (i + 1 < args.Length && (takesValue || !args[i + 1].StartsWith("--", StringComparison.Ordinal)))
                 map[key] = args[++i];
-            }
             else
-            {
-                map[key] = "true"; // flag booleano (es. --stdin)
-            }
+                map[key] = "true"; // boolean flag (for example --stdin)
         }
         return map;
     }
@@ -254,35 +308,43 @@ public static class CommandLineHandler
         return sb.ToString();
     }
 
+    private static int PrintVersion()
+    {
+        Console.WriteLine($"{AppInfo.ProductName} {AppInfo.Version}");
+        return 0;
+    }
+
     private static int PrintHelp()
     {
         Console.WriteLine(
-"""
-SMTP Relay - servizio Windows di inoltro SMTP con allowlist IP, TLS e auth Basic/Microsoft 365.
+$"""
+{AppInfo.ProductName} {AppInfo.Version} - Windows SMTP relay with IP allowlist, TLS and Basic / Microsoft 365 authentication.
 
-USO:
-  SmtpRelay <comando> [opzioni]
+USAGE:
+  SmtpRelay <command> [options]
 
-COMANDI SERVIZIO (richiedono amministratore):
-  install [--account <utente> --password <pwd>]   Installa il servizio Windows (default: LocalSystem)
-  uninstall                                        Rimuove il servizio
-  start | stop | status                            Avvia / ferma / stato del servizio
+SERVICE (administrator rights needed):
+  install [--account <user> --password-stdin]      Installs or repairs the Windows service (default: LocalSystem)
+  uninstall                                        Removes the service
+  start | stop | restart | status                  Controls the service
 
-CREDENZIALI (cifrate con DPAPI, per-macchina):
-  set-credential --name <nome> [--value <val> | --stdin]   Salva un segreto cifrato
-  remove-credential --name <nome>                          Rimuove un segreto
-  list-credentials                                         Elenca i nomi dei segreti
+CREDENTIALS (encrypted with DPAPI, bound to this computer):
+  set-credential --name <name> [--stdin]           Saves a secret (asks for the value, or reads it from stdin)
+  remove-credential --name <name>                  Removes a secret
+  list-credentials                                 Lists the names of the stored secrets
 
-DIAGNOSTICA:
-  test-upstream        Verifica connessione e autenticazione verso l'upstream
-  show-config          Mostra la configurazione effettiva e la valida
+DIAGNOSTICS:
+  test-upstream        Connects and authenticates to the smart host
+  show-config          Shows the effective configuration and validates it
+  version              Shows the version
 
-Senza comando l'eseguibile parte come servizio/console (host).
+Without a command the executable runs the relay (as a service, or in the console).
 
-ESEMPI:
-  SmtpRelay set-credential --name M365ClientSecret --value "abc123~secret"
+EXAMPLES:
+  SmtpRelay set-credential --name M365ClientSecret
   SmtpRelay test-upstream
   SmtpRelay install
+  SmtpRelay start
 """);
         return 0;
     }

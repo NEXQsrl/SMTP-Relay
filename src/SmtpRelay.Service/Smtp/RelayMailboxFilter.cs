@@ -7,8 +7,8 @@ using SmtpServer.Storage;
 namespace SmtpRelay.Smtp;
 
 /// <summary>
-/// Filtro di busta: applica dimensione massima, numero massimo di destinatari e, se richiesto,
-/// l'obbligo di STARTTLS prima di accettare il messaggio.
+/// Envelope filter: enforces the maximum size, the maximum number of recipients and, when required,
+/// STARTTLS before a message is accepted.
 /// </summary>
 public sealed class RelayMailboxFilter : MailboxFilter
 {
@@ -29,18 +29,18 @@ public sealed class RelayMailboxFilter : MailboxFilter
     {
         if (_tlsMode == InboundTlsMode.StartTlsRequired && !context.Pipe.IsSecure)
         {
-            _logger.LogWarning("MAIL FROM rifiutato: STARTTLS obbligatorio ma la sessione non e cifrata.");
+            _logger.LogWarning("MAIL FROM refused: STARTTLS is required but the session is not encrypted.");
             return Task.FromResult(false);
         }
 
         if (size > 0 && size > _listener.MaxMessageSizeBytes)
         {
-            _logger.LogWarning("MAIL FROM rifiutato: dimensione dichiarata {Size} supera il limite {Max}.",
+            _logger.LogWarning("MAIL FROM refused: the declared size {Size} exceeds the limit {Max}.",
                 size, _listener.MaxMessageSizeBytes);
             return Task.FromResult(false);
         }
 
-        // Nuova transazione: azzera il contatore dei destinatari.
+        // New transaction: reset the recipient counter.
         context.Properties[RecipientCountKey] = 0;
         return Task.FromResult(true);
     }
@@ -53,7 +53,7 @@ public sealed class RelayMailboxFilter : MailboxFilter
 
         if (count > _listener.MaxRecipients)
         {
-            _logger.LogWarning("RCPT TO rifiutato: superato il numero massimo di destinatari ({Max}).", _listener.MaxRecipients);
+            _logger.LogWarning("RCPT TO refused: more than {Max} recipients.", _listener.MaxRecipients);
             return Task.FromResult(false);
         }
 

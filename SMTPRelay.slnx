@@ -1,5 +1,10 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/SmtpRelay.Core/SmtpRelay.Core.csproj" />
+    <Project Path="src/SmtpRelay.Manager/SmtpRelay.Manager.csproj" />
     <Project Path="src/SmtpRelay.Service/SmtpRelay.Service.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/SmtpRelay.Tests/SmtpRelay.Tests.csproj" />
   </Folder>
 </Solution>

@@ -6,7 +6,7 @@ using SmtpRelay.Security;
 
 namespace SmtpRelay.Smtp;
 
-/// <summary>Carica il certificato TLS del listener da file .pfx o dallo store LocalMachine\My.</summary>
+/// <summary>Loads the TLS certificate of the listener from the LocalMachine\My store or from a .pfx file.</summary>
 [SupportedOSPlatform("windows")]
 public static class CertificateLoader
 {
@@ -15,46 +15,60 @@ public static class CertificateLoader
         if (tls.Mode == InboundTlsMode.None)
             return null;
 
+        X509Certificate2? certificate = null;
+
         if (!string.IsNullOrWhiteSpace(tls.CertificateThumbprint))
         {
-            var cert = LoadFromStore(tls.CertificateThumbprint!, logger);
-            if (cert is not null)
-                return cert;
-            logger.LogWarning("Certificato con thumbprint {Thumbprint} non trovato in LocalMachine\\My.", tls.CertificateThumbprint);
+            certificate = LoadFromStore(tls.CertificateThumbprint!);
+            if (certificate is null)
+                logger.LogWarning("No certificate with thumbprint {Thumbprint} in LocalMachine\\My.", tls.CertificateThumbprint);
         }
 
-        if (!string.IsNullOrWhiteSpace(tls.CertificatePath))
+        if (certificate is null && !string.IsNullOrWhiteSpace(tls.CertificatePath))
         {
             if (!File.Exists(tls.CertificatePath))
-                throw new FileNotFoundException($"Certificato TLS non trovato: {tls.CertificatePath}");
+                throw new FileNotFoundException($"TLS certificate not found: {tls.CertificatePath}");
 
             var password = string.IsNullOrWhiteSpace(tls.CertificatePasswordSecret)
                 ? null
                 : secrets.Get(tls.CertificatePasswordSecret);
 
-            var cert = X509CertificateLoader.LoadPkcs12FromFile(
+            // MachineKeySet without PersistKeySet: the private key is removed from the machine key store
+            // when the certificate is disposed, instead of leaving one more key file behind at every start.
+            certificate = X509CertificateLoader.LoadPkcs12FromFile(
                 tls.CertificatePath!,
                 password,
-                X509KeyStorageFlags.MachineKeySet | X509KeyStorageFlags.PersistKeySet);
-
-            logger.LogInformation("Certificato TLS caricato da file: {Subject} (scade {NotAfter:d})", cert.Subject, cert.NotAfter);
-            return cert;
+                X509KeyStorageFlags.MachineKeySet);
         }
 
-        throw new InvalidOperationException("Tls.Mode diverso da None ma nessun certificato configurato.");
+        if (certificate is null)
+            throw new InvalidOperationException("Inbound TLS is on but no certificate could be loaded: check Tls.CertificateThumbprint or Tls.CertificatePath.");
+
+        if (!certificate.HasPrivateKey)
+        {
+            var subject = certificate.Subject;
+            certificate.Dispose();
+            throw new InvalidOperationException(
+                $"The TLS certificate '{subject}' has no private key, or the service account cannot read it.");
+        }
+
+        var now = DateTime.Now;
+        if (certificate.NotAfter < now)
+            logger.LogError("The TLS certificate {Subject} EXPIRED on {NotAfter:d}: clients that verify it will refuse the connection.", certificate.Subject, certificate.NotAfter);
+        else if (certificate.NotAfter < now.AddDays(30))
+            logger.LogWarning("The TLS certificate {Subject} expires on {NotAfter:d}.", certificate.Subject, certificate.NotAfter);
+        else
+            logger.LogInformation("TLS certificate loaded: {Subject} (expires {NotAfter:d}).", certificate.Subject, certificate.NotAfter);
+
+        return certificate;
     }
 
-    private static X509Certificate2? LoadFromStore(string thumbprint, ILogger logger)
+    private static X509Certificate2? LoadFromStore(string thumbprint)
     {
-        var normalized = thumbprint.Replace(" ", "").Replace(":", "").ToUpperInvariant();
+        var normalized = new string(thumbprint.Where(Uri.IsHexDigit).ToArray()).ToUpperInvariant();
         using var store = new X509Store(StoreName.My, StoreLocation.LocalMachine);
         store.Open(OpenFlags.ReadOnly);
         var found = store.Certificates.Find(X509FindType.FindByThumbprint, normalized, validOnly: false);
-        if (found.Count == 0)
-            return null;
-
-        var cert = found[0];
-        logger.LogInformation("Certificato TLS caricato dallo store: {Subject} (scade {NotAfter:d})", cert.Subject, cert.NotAfter);
-        return cert;
+        return found.Count == 0 ? null : found[0];
     }
 }

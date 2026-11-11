@@ -1,0 +1,120 @@
+<!--
+  Builds a release of NEXQ SMTP Relay: self-contained binaries, signatures, setup, zip and checksums.
+
+    dotnet msbuild build\Release.proj -restore -t:Release -p:SignThumbprint=<thumbprint of a certificate in CurrentUser\My>
+    dotnet msbuild build\Release.proj -restore -t:Release -p:SignPfx=<file.pfx> -p:SignPfxPassword=<password>
+    dotnet msbuild build\Release.proj -restore -t:Release                      (unsigned, for local tests only)
+
+  Output: artifacts\release\. Needs Inno Setup 6 (ISCC.exe); pass -p:IsccExe=<path> when it is not in a default folder.
+  The version comes from Directory.Build.props.
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <EnableDefaultItems>false</EnableDefaultItems>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <IsPackable>false</IsPackable>
+
+    <WindowsSdkToolsVersion>10.0.28000.2957</WindowsSdkToolsVersion>
+    <RepoRoot>$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)', '..'))</RepoRoot>
+    <StageDir>$(RepoRoot)artifacts\publish</StageDir>
+    <ReleaseDir>$(RepoRoot)artifacts\release</ReleaseDir>
+    <TimestampUrl Condition="'$(TimestampUrl)' == ''">http://timestamp.digicert.com</TimestampUrl>
+
+    <IsccExe Condition="'$(IsccExe)' == '' and Exists('$(LOCALAPPDATA)\Programs\Inno Setup 6\ISCC.exe')">$(LOCALAPPDATA)\Programs\Inno Setup 6\ISCC.exe</IsccExe>
+    <IsccExe Condition="'$(IsccExe)' == '' and Exists('$(MSBuildProgramFiles32)\Inno Setup 6\ISCC.exe')">$(MSBuildProgramFiles32)\Inno Setup 6\ISCC.exe</IsccExe>
+
+    <!-- How to sign: a .pfx file (CI) or a certificate of the current user's store (developer machine). -->
+    <SignIdentity Condition="'$(SignPfx)' != ''">/f "$(SignPfx)" /p "$(SignPfxPassword)"</SignIdentity>
+    <SignIdentity Condition="'$(SignPfx)' == '' and '$(SignThumbprint)' != ''">/sha1 $(SignThumbprint)</SignIdentity>
+    <IsccSignIdentity Condition="'$(SignPfx)' != ''">/f $q$(SignPfx)$q /p $q$(SignPfxPassword)$q</IsccSignIdentity>
+    <IsccSignIdentity Condition="'$(SignPfx)' == '' and '$(SignThumbprint)' != ''">/sha1 $(SignThumbprint)</IsccSignIdentity>
+    <SignOptions>/fd SHA256 /tr $(TimestampUrl) /td SHA256</SignOptions>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- signtool.exe, the same on a developer machine and in CI. Downloaded by -restore, not referenced by any code. -->
+    <PackageDownload Include="Microsoft.Windows.SDK.BuildTools" Version="[$(WindowsSdkToolsVersion)]" />
+  </ItemGroup>
+
+  <Target Name="Release" DependsOnTargets="Stage;SignBinaries;Setup;Portable;Checksums">
+    <Message Importance="high" Text="Release $(Version) is in $(ReleaseDir)" />
+    <Warning Condition="'$(SignIdentity)' == ''" Text="This build is NOT signed: do not publish it. Pass SignThumbprint or SignPfx." />
+  </Target>
+
+  <!-- Self-contained publish of the service and of the console into one folder, plus the license files. -->
+  <Target Name="Stage">
+    <RemoveDir Directories="$(StageDir);$(ReleaseDir)" />
+    <Exec Command="dotnet publish &quot;$(RepoRoot)src\SmtpRelay.Service\SmtpRelay.Service.csproj&quot; -c Release -r win-x64 --self-contained true -o &quot;$(StageDir)&quot; -p:DebugType=none -p:DebugSymbols=false -nologo -v:q" />
+    <Exec Command="dotnet publish &quot;$(RepoRoot)src\SmtpRelay.Manager\SmtpRelay.Manager.csproj&quot; -c Release -r win-x64 --self-contained true -o &quot;$(StageDir)&quot; -p:DebugType=none -p:DebugSymbols=false -nologo -v:q" />
+    <Copy SourceFiles="$(RepoRoot)LICENSE" DestinationFiles="$(StageDir)\LICENSE.txt" />
+    <Copy SourceFiles="$(RepoRoot)NOTICE" DestinationFiles="$(StageDir)\NOTICE.txt" />
+    <Copy SourceFiles="$(RepoRoot)certs\NEXQ-CodeSigning.cer" DestinationFolder="$(StageDir)" />
+    <MakeDir Directories="$(ReleaseDir)" />
+  </Target>
+
+  <Target Name="FindSignTool" Condition="'$(SignIdentity)' != ''">
+    <ItemGroup>
+      <_SignToolCandidate Include="$(NuGetPackageRoot)microsoft.windows.sdk.buildtools\$(WindowsSdkToolsVersion)\bin\**\x64\signtool.exe" />
+    </ItemGroup>
+    <PropertyGroup>
+      <SignToolExe Condition="'$(SignToolExe)' == ''">@(_SignToolCandidate)</SignToolExe>
+    </PropertyGroup>
+    <Error Condition="!Exists('$(SignToolExe)')" Text="signtool.exe not found. Run with -restore, or pass -p:SignToolExe=&lt;path&gt;." />
+  </Target>
+
+  <!-- Every .exe and .dll that does not already carry a valid signature (ours and the unsigned third-party ones)
+       is signed. Files signed by Microsoft keep their own signature. -->
+  <Target Name="CollectUnsigned" DependsOnTargets="FindSignTool" Condition="'$(SignIdentity)' != ''">
+    <ItemGroup>
+      <_Binary Include="$(StageDir)\**\*.exe;$(StageDir)\**\*.dll" />
+    </ItemGroup>
+  </Target>
+
+  <Target Name="CheckSignature" DependsOnTargets="CollectUnsigned" Condition="'$(SignIdentity)' != ''"
+          Inputs="@(_Binary)" Outputs="%(_Binary.Identity).never">
+    <PropertyGroup>
+      <_Current>%(_Binary.FullPath)</_Current>
+      <_IsOurs>false</_IsOurs>
+      <_IsOurs Condition="$([System.IO.Path]::GetFileName('$(_Current)').StartsWith('SmtpRelay'))">true</_IsOurs>
+    </PropertyGroup>
+    <Exec Condition="'$(_IsOurs)' != 'true'" Command="&quot;$(SignToolExe)&quot; verify /pa /q &quot;$(_Current)&quot;" IgnoreExitCode="true" EchoOff="true"
+          StandardOutputImportance="low" StandardErrorImportance="low" ContinueOnError="true">
+      <Output TaskParameter="ExitCode" PropertyName="_VerifyCode" />
+    </Exec>
+    <ItemGroup Condition="'$(_IsOurs)' == 'true' or '$(_VerifyCode)' != '0'">
+      <_ToSign Include="$(_Current)" />
+    </ItemGroup>
+  </Target>
+
+  <Target Name="SignBinaries" DependsOnTargets="Stage;CheckSignature" Condition="'$(SignIdentity)' != ''">
+    <Message Importance="high" Text="Signing @(_ToSign->Count()) files" />
+    <Exec Command="&quot;$(SignToolExe)&quot; sign $(SignIdentity) $(SignOptions) /q @(_ToSign->'&quot;%(FullPath)&quot;', ' ')" EchoOff="true" />
+  </Target>
+
+  <!-- The setup. Inno Setup signs the uninstaller and the setup itself with the same command. -->
+  <Target Name="Setup" DependsOnTargets="Stage;FindSignTool">
+    <Error Condition="'$(IsccExe)' == '' or !Exists('$(IsccExe)')" Text="Inno Setup 6 (ISCC.exe) not found. Install it, or pass -p:IsccExe=&lt;path&gt;." />
+    <PropertyGroup>
+      <_IsccSign Condition="'$(SignIdentity)' != ''">/DSign=1 &quot;/Snexq=$q$(SignToolExe)$q sign $(IsccSignIdentity) $(SignOptions) /q $f&quot;</_IsccSign>
+    </PropertyGroup>
+    <Exec Command="&quot;$(IsccExe)&quot; /Qp /DAppVersion=$(Version) &quot;/DPublishDir=$(StageDir)&quot; &quot;/DOutputDir=$(ReleaseDir)&quot; $(_IsccSign) &quot;$(RepoRoot)installer\SmtpRelay.iss&quot;" EchoOff="true" />
+  </Target>
+
+  <!-- The same files as a zip, for manual or scripted installations. -->
+  <Target Name="Portable" DependsOnTargets="Stage">
+    <ZipDirectory SourceDirectory="$(StageDir)" DestinationFile="$(ReleaseDir)\SmtpRelay-$(Version)-win-x64.zip" Overwrite="true" />
+    <Copy SourceFiles="$(RepoRoot)certs\NEXQ-CodeSigning.cer" DestinationFolder="$(ReleaseDir)" />
+  </Target>
+
+  <Target Name="Checksums" DependsOnTargets="Setup;Portable">
+    <ItemGroup>
+      <_ReleaseFile Include="$(ReleaseDir)\*.exe;$(ReleaseDir)\*.zip;$(ReleaseDir)\*.cer" />
+    </ItemGroup>
+    <GetFileHash Files="@(_ReleaseFile)" Algorithm="SHA256" HashEncoding="hex">
+      <Output TaskParameter="Items" ItemName="_Hashed" />
+    </GetFileHash>
+    <WriteLinesToFile File="$(ReleaseDir)\SHA256SUMS.txt" Lines="@(_Hashed->'%(FileHash)  %(Filename)%(Extension)')" Overwrite="true" />
+  </Target>
+</Project>
