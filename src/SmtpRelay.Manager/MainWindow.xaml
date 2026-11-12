@@ -929,7 +929,7 @@
                                     <StackPanel>
                                         <TextBlock Text="Listen on address" Style="{StaticResource Label}" />
                                         <TextBox Text="{Binding Options.Snmp.IpAddress, UpdateSourceTrigger=PropertyChanged}" />
-                                        <TextBlock Style="{StaticResource Hint}" Text="0.0.0.0 listens on every network interface." />
+                                        <TextBlock Style="{StaticResource Hint}" Text="0.0.0.0 listens on every network interface. An IP address or a DNS name of this computer listens on that one only." />
                                     </StackPanel>
                                     <StackPanel Grid.Column="2">
                                         <TextBlock Text="UDP port" Style="{StaticResource Label}" />
@@ -960,7 +960,7 @@
                             <StackPanel>
                                 <TextBlock Text="Monitoring systems allowed to ask" Style="{StaticResource H2}" />
                                 <TextBlock Style="{StaticResource Sub}" Margin="0,0,0,16"
-                                           Text="Requests from any other address are ignored without an answer. Use single addresses or networks in CIDR notation. While the list is empty nobody is answered." />
+                                           Text="Requests from any other address are ignored without an answer. Use single addresses, networks in CIDR notation or DNS names (nms01.contoso.local). Names are turned into addresses when the service starts and every five minutes. While the list is empty nobody is answered." />
                                 <Grid>
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*" />

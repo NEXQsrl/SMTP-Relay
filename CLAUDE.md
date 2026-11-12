@@ -87,7 +87,9 @@ default host and the XOAUTH2 user name (`UpstreamOptions.TokenUserName`: the mai
 Monitoring: `RelayMessageStore` updates `DeliveryCounters` (today's delivered / failed, seeded from the audit trail
 at start) next to every audit line. `Snmp/SnmpAgentService` (only when `Snmp.Enabled`) serves them over UDP with
 the hand-written, read-only v1/v2c `SnmpResponder`; it has its own port (1161) because the Windows SNMP service
-owns 161, and a failure there must never stop the relay. OIDs come from `RelayMib` and
+owns 161, and a failure there must never stop the relay. `Snmp.AllowedManagers` takes addresses, networks and DNS
+names (`Monitoring/SnmpManagerList`: names are resolved at start and every five minutes, and keep their last
+addresses when the DNS fails); `Snmp.IpAddress` may be a DNS name of the computer. OIDs come from `RelayMib` and
 `AppInfo.SnmpEnterpriseNumber` (a placeholder until IANA assigns one) and must match `mib/NEXQ-SMTP-RELAY-MIB.txt`.
 
 Configuration: `appsettings.json` next to the executables -> `appsettings.{env}.json` -> env vars prefixed
@@ -126,8 +128,10 @@ the console.
   `C:\ProgramData\SmtpRelay`. `installer/SmtpRelay.iss` moves a 2.0.0 installation out of `{autopf}\NEXQ\SMTP Relay`.
 - The audit line is `DELIVERED|FAILED client=<ip> user=<relay user or -> from=...`. `AuditTrail` and the console
   only look at the marker, but administrators parse these lines: do not reorder the fields.
-- `Iis6RelayList` decodes the binary `RelayIpList` of the IIS metabase from its known layout; it has never been run
-  against a real IIS installation. It must keep refusing data it does not understand instead of guessing.
+- `Iis6RelayList` decodes the binary `RelayIpList` of the IIS metabase from its known layout: the counter of each
+  address group includes the group's mask (2.2.0 missed that and refused every real list). No real sample is in the
+  tests yet. It must keep refusing data it does not understand instead of guessing; the console logs the raw value
+  (`Iis6RelayList.RawValueKey`) so that a failure can be diagnosed.
 - `appsettings.json` is installed with `onlyifdoesntexist uninsneveruninstall`: new settings must have sensible
   defaults in the options classes, because existing installations keep their old file.
 - The tests (`tests/SmtpRelay.Tests`) run the real listener against a fake smart host on loopback; SMTP-path

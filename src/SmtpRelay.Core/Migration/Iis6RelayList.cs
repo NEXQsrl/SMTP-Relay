@@ -24,6 +24,9 @@ public static partial class Iis6RelayList
 {
     private const uint OffsetMask = 0x7FFFFFFF;
 
+    /// <summary>Key of <see cref="Exception.Data"/> that holds the value that could not be decoded.</summary>
+    public const string RawValueKey = "RelayIpList";
+
     [GeneratedRegex(@"^/LM/SmtpSvc/(\d+)$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex VirtualServerRegex();
 
@@ -129,7 +132,19 @@ public static partial class Iis6RelayList
             if (string.IsNullOrWhiteSpace(hex))
                 continue;
 
-            var parsed = ParseBlob(FromHex(hex));
+            Iis6RelayImport parsed;
+            try
+            {
+                parsed = ParseBlob(FromHex(hex));
+            }
+            catch (InvalidDataException ex)
+            {
+                // Kept for the log of the console: the value holds addresses and masks only, and it is what
+                // is needed to understand why it was not recognized.
+                var digits = new string(hex.Where(c => !char.IsWhiteSpace(c)).ToArray());
+                ex.Data[RawValueKey] = $"{location.Trim()} RelayIpList={(digits.Length > 4000 ? digits[..4000] + "..." : digits)}";
+                throw;
+            }
             names += parsed.SkippedNames;
             allExcept |= parsed.AllExceptList;
             foreach (var entry in parsed.Entries)
@@ -155,6 +170,7 @@ public static partial class Iis6RelayList
     /// Decodes the binary form of the list (the metabase property RelayIpList). It starts with the offsets of
     /// four lists (denied addresses, granted addresses, denied names, granted names); an address list holds
     /// groups of addresses that share a subnet mask, each group stored as the mask followed by the addresses.
+    /// The counter of a group includes its mask, while the counter of the list counts the addresses only.
     /// </summary>
     public static Iis6RelayImport ParseBlob(byte[] blob)
     {
@@ -179,17 +195,30 @@ public static partial class Iis6RelayList
             throw Unrecognized();
 
         uint groups = ReadUInt32(blob, offset);
-        if (groups > 256)
+        uint total = ReadUInt32(blob, offset + 4);
+        if (groups > 256 || offset + 8 + (long)groups * 20 > blob.Length)
             throw Unrecognized();
+
+        // IIS counts the mask as the first item of each group, so the counters of the groups add up to the
+        // total of the list plus one per group. A list whose group counters add up to the total itself is
+        // read as holding addresses only.
+        long sum = 0;
+        for (int g = 0; g < groups; g++)
+            sum += ReadUInt32(blob, offset + 8 + g * 20 + 4);
+        bool countIncludesMask = sum != total;
 
         for (int g = 0; g < groups; g++)
         {
             int p = offset + 8 + g * 20;
-            if (p + 20 > blob.Length)
-                throw Unrecognized();
 
             uint family = ReadUInt32(blob, p);
             uint count = ReadUInt32(blob, p + 4);
+            if (countIncludesMask)
+            {
+                if (count == 0)
+                    continue; // not even a mask: an empty group
+                count--;
+            }
             uint fullBytes = ReadUInt32(blob, p + 8);
             uint lastByte = ReadUInt32(blob, p + 12);
             int first = ReadOffset(blob, p + 16);

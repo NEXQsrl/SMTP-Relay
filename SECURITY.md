@@ -124,6 +124,10 @@ SMTP Relay **has not had an independent security review**. Do not expose the lis
 - It answers only addresses in `Snmp.AllowedManagers` (an empty list answers nobody) that present the community,
   which is kept in the encrypted secret store and compared in constant time. Any other request is dropped without
   an answer, so the agent does not reveal itself to a scan.
+- An entry of `Snmp.AllowedManagers` can be a DNS name. The agent then trusts your DNS: whoever can change the
+  record of that name can make the agent answer another address (the community is still required). The names are
+  resolved at start and every five minutes; a name that no longer resolves keeps its last addresses until the
+  service is restarted. Use IP addresses where the DNS is not under your control.
 - SNMP v1 and v2c have no encryption: the community and the values travel in clear text, and the source address
   of a UDP request can be forged. Keep the agent on a management network. SNMPv3 is not implemented.
 - Malformed requests are discarded; the size of a request and the number of variables are bounded.

@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text.RegularExpressions;
 using MimeKit;
+using SmtpRelay.Monitoring;
 using SmtpRelay.Security;
 
 namespace SmtpRelay.Configuration;
@@ -136,15 +137,15 @@ public static partial class RelayOptionsValidator
         {
             if (o.Snmp.Port is < 1 or > 65535)
                 errors.Add($"Snmp.Port is not valid: {o.Snmp.Port}.");
-            if (!IPAddress.TryParse(o.Snmp.IpAddress, out _))
-                errors.Add($"Snmp.IpAddress is not a valid IP address: '{o.Snmp.IpAddress}'.");
+            if (!IPAddress.TryParse(o.Snmp.IpAddress, out _) && !SnmpManagerList.IsHostName(o.Snmp.IpAddress))
+                errors.Add($"Snmp.IpAddress is not an IP address or a DNS name of this computer: '{o.Snmp.IpAddress}'.");
             if (!IsValidName(o.Snmp.CommunitySecret))
                 errors.Add("Snmp.CommunitySecret is required (name of the stored secret that holds the community).");
         }
         foreach (var entry in o.Snmp.AllowedManagers)
         {
-            if (!IpAllowList.TryParse(entry, out _))
-                errors.Add($"Snmp.AllowedManagers: '{entry}' is not an IP address or a CIDR network.");
+            if (!SnmpManagerList.IsValidEntry(entry))
+                errors.Add($"Snmp.AllowedManagers: '{entry}' is not an IP address, a CIDR network or a DNS name.");
         }
 
         return errors;

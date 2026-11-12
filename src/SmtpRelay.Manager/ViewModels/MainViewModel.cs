@@ -464,9 +464,9 @@ public sealed class MainViewModel : INotifyPropertyChanged
     {
         entry = entry?.Trim() ?? "";
         if (entry.Length == 0)
-            return "Type the IP address of the monitoring system, or a network such as 192.168.10.0/24.";
-        if (!IpAllowList.TryParse(entry, out _))
-            return $"'{entry}' is not an IP address or a CIDR network.";
+            return "Type the IP address or the DNS name of the monitoring system, or a network such as 192.168.10.0/24.";
+        if (!SnmpManagerList.IsValidEntry(entry))
+            return $"'{entry}' is not an IP address, a CIDR network or a DNS name.";
         if (SnmpManagers.Contains(entry, StringComparer.OrdinalIgnoreCase))
             return $"'{entry}' is already in the list.";
 

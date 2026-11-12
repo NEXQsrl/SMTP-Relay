@@ -131,6 +131,10 @@ SMTP Relay **non ha avuto una revisione di sicurezza indipendente**. Non esporre
 - Risponde solo agli indirizzi in `Snmp.AllowedManagers` (un elenco vuoto non risponde a nessuno) che presentano
   la community, conservata nell'archivio cifrato dei segreti e confrontata in tempo costante. Ogni altra richiesta
   è scartata senza risposta, così l'agente non si rivela a una scansione.
+- Una voce di `Snmp.AllowedManagers` può essere un nome DNS. L'agente si fida allora del tuo DNS: chi può
+  modificare il record di quel nome può far rispondere l'agente a un altro indirizzo (la community resta
+  necessaria). I nomi sono risolti all'avvio e ogni cinque minuti; un nome che non si risolve più conserva gli
+  ultimi indirizzi fino al riavvio del servizio. Usa indirizzi IP dove il DNS non è sotto il tuo controllo.
 - SNMP v1 e v2c non hanno cifratura: community e valori viaggiano in chiaro, e l'indirizzo di origine di una
   richiesta UDP può essere falsificato. Tieni l'agente su una rete di gestione. SNMPv3 non è implementato.
 - Le richieste malformate sono scartate; la dimensione di una richiesta e il numero di variabili sono limitati.

@@ -9,7 +9,10 @@ public sealed class SnmpOptions
     /// <summary>Off by default.</summary>
     public bool Enabled { get; set; }
 
-    /// <summary>Address to listen on (0.0.0.0 = every IPv4 interface).</summary>
+    /// <summary>
+    /// Address to listen on (0.0.0.0 = every IPv4 interface), or a DNS name of this computer, which is
+    /// resolved when the service starts.
+    /// </summary>
     public string IpAddress { get; set; } = "0.0.0.0";
 
     /// <summary>UDP port. Not 161 by default, because the Windows SNMP service normally owns it.</summary>
@@ -19,8 +22,8 @@ public sealed class SnmpOptions
     public string CommunitySecret { get; set; } = "SnmpCommunity";
 
     /// <summary>
-    /// IP addresses or CIDR networks of the monitoring systems allowed to query the agent.
-    /// When empty nobody is answered.
+    /// IP addresses, CIDR networks or DNS names of the monitoring systems allowed to query the agent.
+    /// Names are resolved when the service starts and every few minutes. When empty nobody is answered.
     /// </summary>
     public List<string> AllowedManagers { get; set; } = new();
 }

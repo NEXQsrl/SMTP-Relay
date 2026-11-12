@@ -7,15 +7,16 @@ public sealed class Iis6RelayListTests
 {
     private const uint Ref = 0x80000000;
 
-    // The list as IIS stores it when "Only the list below" contains the single computer 127.0.0.1
-    // (the block that the well-known administration scripts for RelayIpList start from).
+    // The list as IIS stores it when "Only the list below" contains the single computer 127.0.0.1: the block
+    // that the well-known administration scripts for RelayIpList start from, plus one address. The list
+    // counts 1 address; the group counts 2 items, because its mask is the first one.
     private static readonly byte[] OnlyLoopback =
     {
         24, 0, 0, 128,   32, 0, 0, 128,   60, 0, 0, 128,   68, 0, 0, 128,
         1, 0, 0, 0,      76, 0, 0, 0,
         0, 0, 0, 0,      0, 0, 0, 0,
-        1, 0, 0, 0,      0, 0, 0, 0,
-        2, 0, 0, 0,      1, 0, 0, 0,      4, 0, 0, 0,      0, 0, 0, 0,      76, 0, 0, 128,
+        1, 0, 0, 0,      1, 0, 0, 0,
+        2, 0, 0, 0,      2, 0, 0, 0,      4, 0, 0, 0,      0, 0, 0, 0,      76, 0, 0, 128,
         0, 0, 0, 0,      0, 0, 0, 0,
         0, 0, 0, 0,      0, 0, 0, 0,
         255, 255, 255, 255,
@@ -30,6 +31,31 @@ public sealed class Iis6RelayListTests
         Assert.Equal(new[] { "127.0.0.1" }, import.Entries);
         Assert.False(import.AllExceptList);
         Assert.Equal(0, import.SkippedNames);
+    }
+
+    [Fact]
+    public void TheBlockWithoutComputersIsEmpty()
+    {
+        // The same block before any address is added: the group holds its mask only.
+        var blob = OnlyLoopback[..80];
+        blob[36] = 0;
+        blob[44] = 1;
+
+        var import = Iis6RelayList.ParseBlob(blob);
+
+        Assert.Empty(import.Entries);
+        Assert.False(import.AllExceptList);
+    }
+
+    [Fact]
+    public void AListWhoseGroupsCountAddressesOnlyIsReadToo()
+    {
+        var blob = Build(
+            granted: new[] { (new byte[] { 255, 255, 255, 255 }, new[] { new byte[] { 10, 0, 0, 1 }, new byte[] { 10, 0, 0, 2 } }) },
+            denied: Array.Empty<(byte[], byte[][])>(),
+            countIncludesMask: false);
+
+        Assert.Equal(new[] { "10.0.0.1", "10.0.0.2" }, Iis6RelayList.ParseBlob(blob).Entries);
     }
 
     [Fact]
@@ -80,6 +106,22 @@ public sealed class Iis6RelayListTests
     [Fact]
     public void ATruncatedListIsRefused()
         => Assert.Throws<InvalidDataException>(() => Iis6RelayList.ParseBlob(OnlyLoopback[..82]));
+
+    [Fact]
+    public void AValueOfTheMetabaseThatIsNotUnderstoodIsKeptForTheLog()
+    {
+        var path = Path.Combine(Path.GetTempPath(), "smtprelay-metabase-" + Guid.NewGuid().ToString("N") + ".xml");
+        File.WriteAllText(path, """<configuration><MBProperty><IIsSmtpServer Location="/LM/SmtpSvc/1" RelayIpList="0102030405" /></MBProperty></configuration>""");
+        try
+        {
+            var error = Assert.Throws<InvalidDataException>(() => Iis6RelayList.ReadMetabase(path));
+            Assert.Equal("/LM/SmtpSvc/1 RelayIpList=0102030405", error.Data[Iis6RelayList.RawValueKey]);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
 
     [Fact]
     public void TheListIsFoundInTheMetabaseFile()
@@ -150,7 +192,7 @@ public sealed class Iis6RelayListTests
         => Assert.False(Iis6RelayList.TryParseAdsiEntry(value, out _));
 
     /// <summary>Builds the binary list with the layout IIS uses: four offsets, flags, then the lists.</summary>
-    private static byte[] Build((byte[] Mask, byte[][] Addresses)[] granted, (byte[] Mask, byte[][] Addresses)[] denied)
+    private static byte[] Build((byte[] Mask, byte[][] Addresses)[] granted, (byte[] Mask, byte[][] Addresses)[] denied, bool countIncludesMask = true)
     {
         const int header = 24;
         int deniedSize = 8 + denied.Length * 20;
@@ -179,7 +221,7 @@ public sealed class Iis6RelayListTests
             {
                 int ones = mask.Sum(b => System.Numerics.BitOperations.PopCount(b));
                 writer.Write(2u);                       // AF_INET
-                writer.Write((uint)addresses.Length);
+                writer.Write((uint)(addresses.Length + (countIncludesMask ? 1 : 0)));
                 writer.Write((uint)(ones / 8));         // full bytes of the mask
                 writer.Write((uint)(ones % 8 == 0 ? 0 : mask[ones / 8]));
                 writer.Write((uint)(data + payload.Length) | Ref);

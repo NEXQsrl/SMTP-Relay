@@ -21,7 +21,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version 2.2.0" src="https://img.shields.io/badge/version-2.2.0-2563eb">
+  <img alt="Version 2.2.1" src="https://img.shields.io/badge/version-2.2.1-2563eb">
   <img alt="Windows Server and Windows 10/11" src="https://img.shields.io/badge/Windows-Server%202016%2B%20%7C%2010%20%7C%2011-0f766e">
   <img alt="Microsoft 365 OAuth2" src="https://img.shields.io/badge/Microsoft%20365-OAuth2-7c3aed">
   <img alt="Self-hosted" src="https://img.shields.io/badge/self--hosted-on%20premises-475569">
@@ -77,7 +77,7 @@ SMTP Relay sits between those devices and your mail system:
   </tr>
 </table>
 
-<sub>The screenshots show the real interface of version 2.2.0 with sample data (addresses, tenants and messages are examples).</sub>
+<sub>The screenshots show the real interface of version 2.2.1 with sample data (addresses, tenants and messages are examples).</sub>
 
 ## Features
 
@@ -135,16 +135,16 @@ SMTP Relay sits between those devices and your mail system:
 You need a Windows Server (or Windows 10/11) that your devices can reach, and administrator rights on it.
 Nothing else: the .NET runtime is included in the setup.
 
-**1. Download** `SmtpRelay-Setup-2.2.0.exe` from the
+**1. Download** `SmtpRelay-Setup-2.2.1.exe` from the
 [latest release](https://github.com/NEXQsrl/SMTP-Relay/releases/latest). The release lists the SHA-256 of every file
-(`SHA256SUMS.txt`): check it with `Get-FileHash .\SmtpRelay-Setup-2.2.0.exe -Algorithm SHA256`.
+(`SHA256SUMS.txt`): check it with `Get-FileHash .\SmtpRelay-Setup-2.2.1.exe -Algorithm SHA256`.
 
 **2. Trust the signature (once per server).** The files are signed by *NEXQ S.r.l.* with a self-signed certificate.
 Windows trusts it only after you import it. The public certificate is inside the signature of the file; extract it,
 check that its thumbprint is `989A5C82203AB19B6DB29FC447E8CB5EBEEB60D8`, then import it (elevated PowerShell):
 
 ```powershell
-$cert = (Get-AuthenticodeSignature .\SmtpRelay-Setup-2.2.0.exe).SignerCertificate
+$cert = (Get-AuthenticodeSignature .\SmtpRelay-Setup-2.2.1.exe).SignerCertificate
 $cert.Thumbprint          # must be 989A5C82203AB19B6DB29FC447E8CB5EBEEB60D8
 Export-Certificate -Cert $cert -FilePath .\NEXQ-CodeSigning.cer | Out-Null
 Import-Certificate -FilePath .\NEXQ-CodeSigning.cer -CertStoreLocation Cert:\LocalMachine\Root
@@ -184,7 +184,7 @@ if you configured a certificate). Each message appears in the **Logs** page with
 ### Unattended installation
 
 ```powershell
-.\SmtpRelay-Setup-2.2.0.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG="C:\Temp\smtprelay-setup.log"
+.\SmtpRelay-Setup-2.2.1.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG="C:\Temp\smtprelay-setup.log"
 ```
 
 Then copy your `appsettings.json` to the installation folder, store the secret and start the service:
@@ -333,7 +333,7 @@ no public authority vouches for it, so Windows and security products do not know
 | What you see | Why | What to do |
 |---|---|---|
 | *Unknown publisher* in the UAC prompt | The certificate is not trusted on this computer yet | Import it as in [step 2](#install-in-five-minutes). The prompt then shows *Verified publisher: NEXQ S.r.l.* |
-| *Windows protected your PC* (SmartScreen) | The file was downloaded from the Internet and has no reputation; a self-signed signature does not build any | *More info > Run anyway*, or first run `Unblock-File .\SmtpRelay-Setup-2.2.0.exe` after checking its SHA-256 |
+| *Windows protected your PC* (SmartScreen) | The file was downloaded from the Internet and has no reputation; a self-signed signature does not build any | *More info > Run anyway*, or first run `Unblock-File .\SmtpRelay-Setup-2.2.1.exe` after checking its SHA-256 |
 | *Access denied* when starting the setup or the programs, event 1121 of Microsoft Defender | The attack surface reduction rule *Block executable files from running unless they meet a prevalence, age, or trusted list criterion* blocks any new program | Add an exclusion (below), or in Microsoft Defender for Endpoint create an **Allow** indicator for the certificate |
 | The antivirus quarantines or blocks a file | Heuristics on a new, rarely seen program that listens on a port | Check the SHA-256 against the release, then allow the publisher certificate or exclude the installation folder |
 
@@ -341,7 +341,7 @@ Exclusion for the Microsoft Defender attack surface reduction rules (elevated Po
 only while you run the setup):
 
 ```powershell
-Add-MpPreference -AttackSurfaceReductionOnlyExclusions "C:\Install\SmtpRelay-Setup-2.2.0.exe"
+Add-MpPreference -AttackSurfaceReductionOnlyExclusions "C:\Install\SmtpRelay-Setup-2.2.1.exe"
 Add-MpPreference -AttackSurfaceReductionOnlyExclusions "C:\Program Files\SMTP Relay"
 ```
 
@@ -427,8 +427,10 @@ To turn it on, open the **SNMP** page of the console:
 
 1. Switch on **Answer SNMP requests**.
 2. Type a **community** and press **Store**. It is kept in the encrypted store, not in the settings file.
-3. Add the address of your monitoring system to **Monitoring systems allowed to ask**. Requests from any other
-   address, or with another community, get no answer.
+3. Add your monitoring system to **Monitoring systems allowed to ask**: its IP address, a network in CIDR
+   notation, or its DNS name (`nms01.contoso.local`). Requests from any other address, or with another community,
+   get no answer. A DNS name is turned into its addresses when the service starts and every five minutes; if the
+   name stops resolving, the last addresses are kept.
 4. Press **Save and restart service**.
 
 Then, from the monitoring system:
@@ -483,8 +485,8 @@ The console writes `appsettings.json` for you. Every setting can also be set wit
 | `Delivery.SpoolFailedMessages` / `FailedSpoolRetentionDays` | `true` / `30` | Copies of undelivered messages |
 | `Updates.CheckOnStartup` | `true` | The console looks for a newer release when it opens |
 | `Snmp.Enabled` | `false` | Turns the SNMP agent on |
-| `Snmp.IpAddress` / `Port` | `0.0.0.0` / `1161` | Where the SNMP agent listens (UDP) |
-| `Snmp.AllowedManagers` | empty | Addresses and CIDR networks of the monitoring systems; empty answers nobody |
+| `Snmp.IpAddress` / `Port` | `0.0.0.0` / `1161` | Where the SNMP agent listens (UDP): an IP address, or a DNS name of this computer |
+| `Snmp.AllowedManagers` | empty | Addresses, CIDR networks and DNS names of the monitoring systems; empty answers nobody |
 | `Snmp.CommunitySecret` | `SnmpCommunity` | Name of the stored secret that holds the community |
 
 Secrets (`M365ClientSecret`, `AcsClientSecret`, `UpstreamPassword`, `TlsCertPassword`, `SnmpCommunity`) are never in this file: the settings only
@@ -539,6 +541,9 @@ Version 2.2.0 adds the sign-in of the clients with the relay's own users and the
 The sign-in is covered by the automated tests against the real listener. **The import from IIS 6 has been tested
 only with data built for the tests**, not on a server with the IIS SMTP service: check the entries it proposes
 before you save. The audit line has a new field, `user=`, after `client=`: adjust anything that parses it.
+Version 2.2.1 corrects the import, which in 2.2.0 refused the list of a real IIS server. If the list is still not
+understood, the console writes the value it found to its log (`manager-*.log`): attach that line to your report.
+It also lets the SNMP agent take DNS names, for the monitoring systems and for the address it listens on.
 
 Version 2.1.0 adds Azure Communication Services, certificate credentials and the SNMP agent. The SNMP agent is
 tested against an independent SNMP client, and the two OAuth2 modes against a test server. **Signing in to the real

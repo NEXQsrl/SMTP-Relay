@@ -222,7 +222,10 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            ShowError("The relay list of IIS could not be read:\n" + ex.Message);
+            var raw = ex.Data[SmtpRelay.Migration.Iis6RelayList.RawValueKey] as string;
+            ManagerLog.Write($"Import from IIS 6 failed: {ex.Message}{(raw is null ? "" : " " + raw)}");
+            ShowError("The relay list of IIS could not be read:\n" + ex.Message +
+                      (raw is null ? "" : "\n\nThe value found in IIS was written to the console log (Logs page, manager-*.log): send that line with your report."));
             return;
         }
 
