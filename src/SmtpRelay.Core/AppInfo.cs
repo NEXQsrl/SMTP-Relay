@@ -13,6 +13,13 @@ public static class AppInfo
     public const string ReleasesUrl = RepositoryUrl + "/releases";
     public const string WebsiteUrl = "https://www.nexq.it";
 
+    /// <summary>
+    /// Private enterprise number under 1.3.6.1.4.1 that the SNMP objects are registered below.
+    /// PLACEHOLDER: NEXQ S.r.l. has no number assigned by IANA yet. When it is assigned, change it here and
+    /// in the MIB module (folder "mib"); a test checks that the two agree.
+    /// </summary>
+    public const uint SnmpEnterpriseNumber = 99999;
+
     /// <summary>Version of the product, for example "2.0.0".</summary>
     public static string Version { get; } = ReadVersion();
 

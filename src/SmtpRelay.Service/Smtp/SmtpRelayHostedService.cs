@@ -5,6 +5,7 @@ using System.Security.Cryptography.X509Certificates;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using SmtpRelay.Configuration;
+using SmtpRelay.Monitoring;
 using SmtpRelay.Relay;
 using SmtpRelay.Security;
 using SmtpServer;
@@ -26,6 +27,7 @@ public sealed class SmtpRelayHostedService : BackgroundService
     private readonly ILogger<SmtpRelayHostedService> _logger;
     private readonly IHostApplicationLifetime _lifetime;
     private readonly SessionLimiter _limiter;
+    private readonly DeliveryCounters _counters;
 
     private X509Certificate2? _certificate;
 
@@ -36,8 +38,10 @@ public sealed class SmtpRelayHostedService : BackgroundService
         IpAllowList allowList,
         ILoggerFactory loggerFactory,
         ILogger<SmtpRelayHostedService> logger,
-        IHostApplicationLifetime lifetime)
+        IHostApplicationLifetime lifetime,
+        DeliveryCounters? counters = null)
     {
+        _counters = counters ?? new DeliveryCounters();
         _options = options;
         _sender = sender;
         _secrets = secrets;
@@ -135,7 +139,8 @@ public sealed class SmtpRelayHostedService : BackgroundService
             _options.Delivery,
             _options.FailedSpoolDirectory,
             componentLogger,
-            auditLogger));
+            auditLogger,
+            _counters));
         serviceProvider.Add(new RelayMailboxFilter(_options.Listener, _options.Tls.Mode, componentLogger));
         serviceProvider.Add(new AllowListEndpointListenerFactory(new EndpointListenerFactory(), _allowList, _limiter, componentLogger));
 

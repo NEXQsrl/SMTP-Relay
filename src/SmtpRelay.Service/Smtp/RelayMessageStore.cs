@@ -6,6 +6,7 @@ using System.Text;
 using Microsoft.Extensions.Logging;
 using MimeKit;
 using SmtpRelay.Configuration;
+using SmtpRelay.Monitoring;
 using SmtpRelay.Relay;
 using SmtpRelay.Security;
 using SmtpServer;
@@ -29,6 +30,7 @@ public sealed class RelayMessageStore : MessageStore
     private readonly string _failedSpoolDirectory;
     private readonly ILogger _logger;
     private readonly ILogger _audit;
+    private readonly DeliveryCounters _counters;
     private long _nextCleanupTicks;
 
     public RelayMessageStore(
@@ -36,8 +38,10 @@ public sealed class RelayMessageStore : MessageStore
         DeliveryOptions delivery,
         string failedSpoolDirectory,
         ILogger logger,
-        ILogger audit)
+        ILogger audit,
+        DeliveryCounters counters)
     {
+        _counters = counters;
         _sender = sender;
         _delivery = delivery;
         _failedSpoolDirectory = failedSpoolDirectory;
@@ -73,6 +77,7 @@ public sealed class RelayMessageStore : MessageStore
         catch (Exception ex)
         {
             _logger.LogError(ex, "Cannot parse the message received from {ClientIp}.", clientIp);
+            _counters.RecordFailed();
             _audit.LogWarning(
                 "FAILED client={ClientIp} from={From} to={To} size={Size} permanent={Permanent} reason={Reason}",
                 clientIp, from, to, sizeBytes, true, "message cannot be parsed");
@@ -87,6 +92,7 @@ public sealed class RelayMessageStore : MessageStore
                 await _sender.SendAsync(message, envelopeFrom, recipients, cancellationToken).ConfigureAwait(false);
                 stopwatch.Stop();
 
+                _counters.RecordDelivered();
                 _audit.LogInformation(
                     "DELIVERED client={ClientIp} from={From} to={To} size={Size} subject={Subject} durationMs={Duration}",
                     clientIp, from, to, sizeBytes, subject, stopwatch.ElapsedMilliseconds);
@@ -95,6 +101,7 @@ public sealed class RelayMessageStore : MessageStore
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
+                _counters.RecordFailed();
                 _audit.LogWarning(
                     "FAILED client={ClientIp} from={From} to={To} size={Size} subject={Subject} permanent={Permanent} reason={Reason}",
                     clientIp, from, to, sizeBytes, subject, false, "service shutting down");
@@ -107,6 +114,7 @@ public sealed class RelayMessageStore : MessageStore
                 bool permanent = ex is UpstreamDeliveryException { IsPermanent: true };
                 stopwatch.Stop();
 
+                _counters.RecordFailed();
                 _audit.LogWarning(
                     "FAILED client={ClientIp} from={From} to={To} size={Size} subject={Subject} permanent={Permanent} reason={Reason}",
                     clientIp, from, to, sizeBytes, subject, permanent, LogSanitizer.Clean(ex.Message, 512));

@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace SmtpRelay.Configuration;
 
 /// <summary>How the relay authenticates to the smart host.</summary>
@@ -10,7 +12,20 @@ public enum UpstreamAuthMode
     Microsoft365,
 
     /// <summary>No authentication (for example an Exchange Online connector that trusts the public IP).</summary>
-    Anonymous
+    Anonymous,
+
+    /// <summary>Azure Communication Services Email over SMTP, with a Microsoft Entra application (XOAUTH2).</summary>
+    AzureCommunicationServices
+}
+
+/// <summary>How a Microsoft Entra application proves its identity when it asks for a token.</summary>
+public enum EntraCredentialType
+{
+    /// <summary>A client secret kept in the encrypted secret store.</summary>
+    ClientSecret,
+
+    /// <summary>A certificate with its private key in the LocalMachine\My store.</summary>
+    Certificate
 }
 
 /// <summary>Transport security of the connection to the smart host.</summary>
@@ -63,6 +78,25 @@ public sealed class UpstreamOptions
 
     public BasicAuthOptions Basic { get; set; } = new();
     public Microsoft365Options Microsoft365 { get; set; } = new();
+    public AzureCommunicationOptions AzureCommunication { get; set; } = new();
+
+    /// <summary>The Entra application of the current mode, or null when the mode does not use one.</summary>
+    [JsonIgnore]
+    public EntraApplicationOptions? EntraApplication => Mode switch
+    {
+        UpstreamAuthMode.Microsoft365 => Microsoft365,
+        UpstreamAuthMode.AzureCommunicationServices => AzureCommunication,
+        _ => null
+    };
+
+    /// <summary>User name sent with the access token (XOAUTH2), or null when the mode does not use a token.</summary>
+    [JsonIgnore]
+    public string? TokenUserName => Mode switch
+    {
+        UpstreamAuthMode.Microsoft365 => Microsoft365.SenderUsername,
+        UpstreamAuthMode.AzureCommunicationServices => AzureCommunication.SmtpUsername,
+        _ => null
+    };
 }
 
 public sealed class BasicAuthOptions
@@ -73,16 +107,52 @@ public sealed class BasicAuthOptions
     public string PasswordSecret { get; set; } = "UpstreamPassword";
 }
 
-public sealed class Microsoft365Options
+/// <summary>Microsoft Entra application (app registration) used to get an access token with the client credentials flow.</summary>
+public abstract class EntraApplicationOptions
 {
     public string TenantId { get; set; } = "";
     public string ClientId { get; set; } = "";
 
+    /// <summary>Client secret (default) or certificate.</summary>
+    public EntraCredentialType Credential { get; set; } = EntraCredentialType.ClientSecret;
+
     /// <summary>Name of the secret (encrypted store) that holds the client secret of the app registration.</summary>
-    public string ClientSecretName { get; set; } = "M365ClientSecret";
+    public string ClientSecretName { get; set; } = "";
+
+    /// <summary>
+    /// Thumbprint of the certificate in LocalMachine\My whose public part was uploaded to the app registration.
+    /// Used when <see cref="Credential"/> is Certificate. The service account must be able to read the private key.
+    /// </summary>
+    public string CertificateThumbprint { get; set; } = "";
+
+    public string Scope { get; set; } = "";
+}
+
+public sealed class Microsoft365Options : EntraApplicationOptions
+{
+    public Microsoft365Options()
+    {
+        ClientSecretName = "M365ClientSecret";
+        Scope = "https://outlook.office365.com/.default";
+    }
 
     /// <summary>UPN of the sending mailbox (used for XOAUTH2 and as the default sender).</summary>
     public string SenderUsername { get; set; } = "";
+}
 
-    public string Scope { get; set; } = "https://outlook.office365.com/.default";
+public sealed class AzureCommunicationOptions : EntraApplicationOptions
+{
+    public const string DefaultHost = "smtp.azurecomm.net";
+
+    public AzureCommunicationOptions()
+    {
+        ClientSecretName = "AcsClientSecret";
+        Scope = "https://communication.azure.com/.default";
+    }
+
+    /// <summary>
+    /// The SMTP Username created on the Communication Services resource and linked to the Entra application
+    /// (Azure portal, resource, "SMTP Usernames").
+    /// </summary>
+    public string SmtpUsername { get; set; } = "";
 }

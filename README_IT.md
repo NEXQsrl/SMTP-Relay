@@ -21,7 +21,7 @@
 </p>
 
 <p align="center">
-  <img alt="Versione 2.0.0" src="https://img.shields.io/badge/versione-2.0.0-2563eb">
+  <img alt="Versione 2.1.0" src="https://img.shields.io/badge/versione-2.1.0-2563eb">
   <img alt="Windows Server e Windows 10/11" src="https://img.shields.io/badge/Windows-Server%202016%2B%20%7C%2010%20%7C%2011-0f766e">
   <img alt="Microsoft 365 OAuth2" src="https://img.shields.io/badge/Microsoft%20365-OAuth2-7c3aed">
   <img alt="Self-hosted" src="https://img.shields.io/badge/self--hosted-on%20premises-475569">
@@ -62,7 +62,7 @@ SMTP Relay si mette tra quegli apparati e il sistema di posta:
 
 <table>
   <tr>
-    <td width="50%"><img src="assets/screenshots/smarthost.png" alt="Pagina Smart host"><br><b>Smart host</b>: Microsoft 365 con OAuth2, utente e password, oppure nessuna autenticazione. Il segreto si salva cifrato con un clic; <i>Test connection</i> e <i>Send a test message</i> usano le impostazioni a schermo.</td>
+    <td width="50%"><img src="assets/screenshots/smarthost.png" alt="Pagina Smart host"><br><b>Smart host</b>: Microsoft 365 o Azure Communication Services con OAuth2 (client secret o certificato), utente e password, oppure nessuna autenticazione. Il segreto si salva cifrato con un clic; <i>Test connection</i> e <i>Send a test message</i> usano le impostazioni a schermo.</td>
     <td width="50%"><img src="assets/screenshots/access.png" alt="Pagina Allowed senders"><br><b>Allowed senders</b>: indirizzi singoli e reti CIDR, IPv4 e IPv6. Tutto il resto viene disconnesso prima del saluto.</td>
   </tr>
   <tr>
@@ -73,9 +73,13 @@ SMTP Relay si mette tra quegli apparati e il sistema di posta:
     <td width="50%"><img src="assets/screenshots/tls.png" alt="Pagina Inbound TLS"><br><b>Inbound TLS</b>: STARTTLS offerto o obbligatorio per i client, con un certificato dello store di Windows o un file .pfx. Minimo TLS 1.2.</td>
     <td width="50%"><img src="assets/screenshots/logging.png" alt="Pagina Logging e retention"><br><b>Logging & retention</b>: livello di dettaglio, rotazione per giorno e per dimensione, per quanto tempo conservare log e messaggi non consegnati.</td>
   </tr>
+  <tr>
+    <td width="50%"><img src="assets/screenshots/snmp.png" alt="Pagina SNMP"><br><b>SNMP</b>: il sistema di monitoraggio legge i messaggi consegnati e falliti oggi. Sola lettura, con community conservata cifrata e un elenco dei sistemi di monitoraggio ammessi.</td>
+    <td width="50%"><img src="assets/screenshots/listener.png" alt="Pagina Listener"><br><b>Listener</b>: indirizzo, porta e limiti applicati alla posta in ingresso.</td>
+  </tr>
 </table>
 
-<sub>Le immagini mostrano l'interfaccia reale della versione 2.0.0 con dati di esempio (indirizzi, tenant e messaggi sono esempi). L'interfaccia è in inglese.</sub>
+<sub>Le immagini mostrano l'interfaccia reale della versione 2.1.0 con dati di esempio (indirizzi, tenant e messaggi sono esempi). L'interfaccia è in inglese.</sub>
 
 ## Funzionalità
 
@@ -92,6 +96,10 @@ SMTP Relay si mette tra quegli apparati e il sistema di posta:
 - **Microsoft 365** con OAuth2 client credentials (XOAUTH2). I token sono in cache e rinnovati automaticamente; un
   client secret ruotato viene usato senza riavviare il servizio.
 - **Qualsiasi server SMTP** con utente e password, oppure **senza autenticazione**.
+- **Azure Communication Services** (Email) via SMTP con OAuth2: il relay accede come applicazione Microsoft Entra,
+  senza casella di posta e senza password nelle impostazioni.
+- **Client secret o certificato** per l'applicazione Microsoft Entra, in entrambe le modalità Microsoft. Con il
+  certificato la chiave privata resta nell'archivio certificati di Windows del server; la console ne crea uno per te.
 - **La cifratura verso lo smart host è imposta**: STARTTLS o TLS implicito. Le credenziali non vengono mai inviate
   su una connessione non cifrata, anche se il server smette di offrire STARTTLS, a meno che tu non lo consenta
   esplicitamente.
@@ -120,15 +128,17 @@ SMTP Relay si mette tra quegli apparati e il sistema di posta:
 - **Riga di comando** per l'automazione: installazione, avvio, arresto, credenziali, test della connessione,
   controllo della configurazione.
 - **Riavvio automatico** del servizio dopo un arresto anomalo.
+- **SNMP** (v1 e v2c, sola lettura): messaggi consegnati e falliti oggi, per il sistema di monitoraggio, con file
+  MIB. Convive con il servizio SNMP di Windows, su una porta propria.
 
 ## Installazione in cinque minuti
 
 Serve un Windows Server (o Windows 10/11) raggiungibile dai tuoi apparati, e i diritti di amministratore.
 Nient'altro: il runtime .NET è incluso nel setup.
 
-**1. Scarica** `SmtpRelay-Setup-2.0.0.exe` dall'
+**1. Scarica** `SmtpRelay-Setup-2.1.0.exe` dall'
 [ultima versione](https://github.com/NEXQsrl/SMTP-Relay/releases/latest). La release elenca lo SHA-256 di ogni file
-(`SHA256SUMS.txt`): controllalo con `Get-FileHash .\SmtpRelay-Setup-2.0.0.exe -Algorithm SHA256`.
+(`SHA256SUMS.txt`): controllalo con `Get-FileHash .\SmtpRelay-Setup-2.1.0.exe -Algorithm SHA256`.
 
 **2. Considera attendibile la firma (una volta per server).** I file sono firmati da *NEXQ S.r.l.* con un
 certificato autofirmato. Windows lo considera attendibile solo dopo che lo hai importato. Il certificato pubblico è
@@ -136,7 +146,7 @@ dentro la firma del file; estrailo, controlla che l'identificazione personale (t
 `989A5C82203AB19B6DB29FC447E8CB5EBEEB60D8`, poi importalo (PowerShell come amministratore):
 
 ```powershell
-$cert = (Get-AuthenticodeSignature .\SmtpRelay-Setup-2.0.0.exe).SignerCertificate
+$cert = (Get-AuthenticodeSignature .\SmtpRelay-Setup-2.1.0.exe).SignerCertificate
 $cert.Thumbprint          # deve essere 989A5C82203AB19B6DB29FC447E8CB5EBEEB60D8
 Export-Certificate -Cert $cert -FilePath .\NEXQ-CodeSigning.cer | Out-Null
 Import-Certificate -FilePath .\NEXQ-CodeSigning.cer -CertStoreLocation Cert:\LocalMachine\Root
@@ -146,7 +156,7 @@ Import-Certificate -FilePath .\NEXQ-CodeSigning.cer -CertStoreLocation Cert:\Loc
 Da quel momento Windows mostra *Autore verificato: NEXQ S.r.l.* quando avvii il setup. Se qualcosa lo blocca ancora,
 vedi [Antivirus, SmartScreen e firma](#antivirus-smartscreen-e-firma).
 
-**3. Avvia il setup.** Installa il programma in `C:\Program Files\NEXQ\SMTP Relay`, registra il servizio Windows
+**3. Avvia il setup.** Installa il programma in `C:\Program Files\SMTP Relay`, registra il servizio Windows
 *NEXQ SMTP Relay* (senza ancora avviarlo), aggiunge la regola del firewall e apre la console.
 
 **4. Configura.** Nella console:
@@ -154,7 +164,7 @@ vedi [Antivirus, SmartScreen e firma](#antivirus-smartscreen-e-firma).
 | Pagina | Cosa impostare |
 |---|---|
 | **Allowed senders** | Gli indirizzi IP o le reti dei tuoi apparati, ad esempio `192.168.10.0/24`. |
-| **Smart host** | *Microsoft 365* (vedi [sotto](#configurazione-di-microsoft-365)), oppure host, porta e credenziali del tuo server. Scrivi il segreto e premi **Store**. |
+| **Smart host** | *Microsoft 365* (vedi [sotto](#configurazione-di-microsoft-365)), *Azure Communication Services* (vedi [sotto](#configurazione-di-azure-communication-services)), oppure host, porta e credenziali del tuo server. Scrivi il segreto e premi **Store**. |
 | **Listener** | La porta, se non vuoi la 25. |
 
 Premi **Test connection**, poi **Send a test message**.
@@ -173,13 +183,13 @@ mostrare *Running*.
 ### Installazione automatica
 
 ```powershell
-.\SmtpRelay-Setup-2.0.0.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG="C:\Temp\smtprelay-setup.log"
+.\SmtpRelay-Setup-2.1.0.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG="C:\Temp\smtprelay-setup.log"
 ```
 
 Poi copia il tuo `appsettings.json` nella cartella di installazione, salva il segreto e avvia il servizio:
 
 ```powershell
-cd "C:\Program Files\NEXQ\SMTP Relay"
+cd "C:\Program Files\SMTP Relay"
 .\SmtpRelay.exe set-credential --name M365ClientSecret      # chiede il valore; oppure passalo con --stdin
 .\SmtpRelay.exe test-upstream
 .\SmtpRelay.exe start
@@ -229,6 +239,48 @@ nella console per riscrivere il mittente di busta.
 I client secret scadono (al massimo dopo 24 mesi). Quando ne crei uno nuovo, salvalo nella console: il servizio in
 esecuzione lo usa dal messaggio successivo, senza riavvio.
 
+## Configurazione di Azure Communication Services
+
+Azure Communication Services (ACS) Email accetta posta via SMTP su `smtp.azurecomm.net`. Il relay accede come
+applicazione Microsoft Entra con OAuth2 (XOAUTH2): non serve alcuna casella di posta.
+
+1. **Prepara le risorse** nel [portale di Azure](https://portal.azure.com): una risorsa *Email Communication
+   Services* con un dominio verificato, collegata a una risorsa *Communication Services* (*Email > Domains > Connect
+   domain*).
+2. **Registra l'applicazione.** Nell'[interfaccia di amministrazione di Microsoft Entra](https://entra.microsoft.com)
+   apri *App registrations > New registration*. Annota **Application (client) ID** e **Directory (tenant) ID**.
+   Crea un client secret, oppure usa un certificato (vedi [sotto](#accesso-con-certificato)).
+3. **Dai accesso all'applicazione.** Nella risorsa Communication Services apri *Access control (IAM) > Add role
+   assignment*, scegli il ruolo **Communication and Email Service Owner** e assegnalo all'applicazione.
+4. **Crea lo SMTP Username.** Nella risorsa Communication Services apri *SMTP Usernames > Add SMTP Username*,
+   seleziona l'applicazione e scegli un nome utente (testo libero, oppure un indirizzo di un dominio collegato).
+   Attendi che lo stato sia *Ready to use*.
+5. **Compila la console**: *Smart host > Azure Communication Services*, poi tenant, client ID e lo SMTP Username
+   esattamente come appare nel portale. Salva il client secret oppure scegli il certificato. Premi
+   **Test connection**.
+
+ACS accetta solo mittenti (indirizzi MailFrom) che esistono in un dominio collegato, ad esempio
+`DoNotReply@contoso.com`. Se i tuoi dispositivi usano altri mittenti, imposta **Always send as** nella console.
+I messaggi con un mittente non ammesso sono rifiutati da ACS e compaiono come `FAILED` nell'audit.
+
+## Accesso con certificato
+
+Nelle modalità Microsoft 365 e Azure Communication Services l'applicazione può dimostrare la propria identità con
+un certificato invece che con un client secret. Non si scrive né si copia nulla di segreto: la chiave privata
+nasce sul server e ci resta.
+
+1. Nella console apri *Smart host*, scegli **A certificate**, poi **Create a certificate**. La console crea un
+   certificato autofirmato (RSA 3072, valido due anni, chiave privata non esportabile) nell'archivio del computer
+   (*Computer locale > Personale*) e ne salva la parte pubblica in un file `.cer`. Puoi anche scegliere un
+   certificato già presente in quell'archivio.
+2. Nell'interfaccia di amministrazione di Microsoft Entra apri la registrazione dell'app, *Certificates & secrets >
+   Certificates > Upload certificate*, e carica il file `.cer`.
+3. Premi **Test connection**, poi **Save and restart service**.
+
+Il certificato scade: la console e `SmtpRelay.exe show-config` mostrano la data. Creane uno nuovo e caricalo prima
+di quel giorno. Se il servizio gira con un account dedicato invece di LocalSystem, dai a quell'account la lettura
+della chiave privata (*certlm.msc > il certificato > Tutte le attività > Gestisci chiavi private*).
+
 ## Antivirus, SmartScreen e firma
 
 Ogni eseguibile e libreria di SMTP Relay, il setup e il programma di disinstallazione sono firmati da
@@ -239,7 +291,7 @@ conoscono finché non glielo dici tu.
 | Cosa vedi | Perché | Cosa fare |
 |---|---|---|
 | *Autore sconosciuto* nella richiesta UAC | Il certificato non è ancora attendibile su questo computer | Importalo come al [passo 2](#installazione-in-cinque-minuti). La richiesta mostrerà *Autore verificato: NEXQ S.r.l.* |
-| *PC protetto da Windows* (SmartScreen) | Il file è stato scaricato da Internet e non ha reputazione; una firma autofirmata non ne costruisce | *Ulteriori informazioni > Esegui comunque*, oppure esegui prima `Unblock-File .\SmtpRelay-Setup-2.0.0.exe` dopo averne controllato lo SHA-256 |
+| *PC protetto da Windows* (SmartScreen) | Il file è stato scaricato da Internet e non ha reputazione; una firma autofirmata non ne costruisce | *Ulteriori informazioni > Esegui comunque*, oppure esegui prima `Unblock-File .\SmtpRelay-Setup-2.1.0.exe` dopo averne controllato lo SHA-256 |
 | *Accesso negato* all'avvio del setup o dei programmi, evento 1121 di Microsoft Defender | La regola di riduzione della superficie di attacco *Blocca l'esecuzione dei file eseguibili a meno che non soddisfino un criterio di prevalenza, età o elenco attendibile* blocca qualsiasi programma nuovo | Aggiungi un'esclusione (sotto), oppure in Microsoft Defender per endpoint crea un indicatore **Consenti** per il certificato |
 | L'antivirus mette in quarantena o blocca un file | Euristiche su un programma nuovo, poco diffuso, che ascolta su una porta | Controlla lo SHA-256 con quello della release, poi consenti il certificato dell'autore o escludi la cartella di installazione |
 
@@ -247,8 +299,8 @@ Esclusione per le regole di riduzione della superficie di attacco di Microsoft D
 amministratore; la prima riga serve solo mentre esegui il setup):
 
 ```powershell
-Add-MpPreference -AttackSurfaceReductionOnlyExclusions "C:\Install\SmtpRelay-Setup-2.0.0.exe"
-Add-MpPreference -AttackSurfaceReductionOnlyExclusions "C:\Program Files\NEXQ\SMTP Relay"
+Add-MpPreference -AttackSurfaceReductionOnlyExclusions "C:\Install\SmtpRelay-Setup-2.1.0.exe"
+Add-MpPreference -AttackSurfaceReductionOnlyExclusions "C:\Program Files\SMTP Relay"
 ```
 
 Per molti server, distribuisci il certificato con un Criterio di gruppo: *Configurazione computer > Criteri >
@@ -275,10 +327,14 @@ flowchart LR
         console -. "impostazioni, segreti,<br/>avvio / arresto, log" .- relay
     end
     m365["Microsoft 365<br/>smtp.office365.com"]
+    acs["Azure Communication Services<br/>smtp.azurecomm.net"]
     other["Qualsiasi server SMTP"]
+    nms["Sistema di monitoraggio"]
     devices -- "SMTP, porta 25" --> gate
     relay -- "STARTTLS + OAuth2 (XOAUTH2)" --> m365
+    relay -- "STARTTLS + OAuth2 (XOAUTH2)" --> acs
     relay -- "TLS + password, o anonimo" --> other
+    nms -. "SNMP, sola lettura (facoltativo)" .-> relay
 ```
 
 - Il **servizio** (`SmtpRelay.exe`) accetta un messaggio solo da un indirizzo consentito, lo inoltra subito e
@@ -286,7 +342,7 @@ flowchart LR
   e riprova, e una copia del messaggio viene salvata come `.eml`.
 - La **console** (`SmtpRelayManager.exe`) modifica `appsettings.json`, salva i segreti, controlla il servizio e
   legge i log. Viene sempre eseguita come amministratore.
-- Le **impostazioni** sono in `C:\Program Files\NEXQ\SMTP Relay\appsettings.json`. I **dati** (log, segreti, messaggi
+- Le **impostazioni** sono in `C:\Program Files\SMTP Relay\appsettings.json`. I **dati** (log, segreti, messaggi
   non consegnati) sono in `C:\ProgramData\SmtpRelay`. Aggiornamenti e riparazioni non toccano né le une né gli altri.
 
 ## Log
@@ -311,6 +367,49 @@ conservazione vengono eliminati automaticamente (31 giorni per impostazione pred
 fanno parte della riga di audit: se nella tua organizzazione non è accettabile, limita ulteriormente l'accesso alla
 cartella o disattiva l'audit.
 
+## Monitoraggio con SNMP
+
+Il relay ha un piccolo agente SNMP proprio (SNMP v1 e v2c, sola lettura). È **separato dal servizio SNMP di
+Windows**: quel servizio mantiene la porta UDP 161 e non viene modificato né richiesto; il relay risponde su una
+porta propria, la **1161** per impostazione predefinita. L'agente è spento finché non lo attivi.
+
+| Valore | OID | Tipo |
+|---|---|---|
+| Consegnati oggi (`smtpRelayDeliveredToday`) | `1.3.6.1.4.1.99999.1.1.1.1.0` | Gauge32 |
+| Falliti oggi (`smtpRelayFailedToday`) | `1.3.6.1.4.1.99999.1.1.1.2.0` | Gauge32 |
+
+Sono gli stessi numeri della pagina Overview: contano i messaggi (non i destinatari), tornano a zero a mezzanotte,
+ora locale, e sopravvivono al riavvio del servizio. Un messaggio fallito che il client invia di nuovo è contato a
+ogni tentativo. L'agente risponde anche a `sysDescr`, `sysObjectID`, `sysUpTime` e `sysName`, così può essere
+aggiunto come dispositivo.
+
+Per attivarlo apri la pagina **SNMP** della console:
+
+1. Attiva **Answer SNMP requests**.
+2. Scrivi una **community** e premi **Store**. È conservata nell'archivio cifrato, non nel file delle impostazioni.
+3. Aggiungi l'indirizzo del sistema di monitoraggio in **Monitoring systems allowed to ask**. Le richieste da
+   qualsiasi altro indirizzo, o con un'altra community, non ricevono risposta.
+4. Premi **Save and restart service**.
+
+Poi, dal sistema di monitoraggio:
+
+```
+snmpget -v2c -c <community> server-relay:1161 1.3.6.1.4.1.99999.1.1.1.1.0 1.3.6.1.4.1.99999.1.1.1.2.0
+```
+
+Il file MIB **`NEXQ-SMTP-RELAY-MIB.txt`** è allegato a ogni release, è installato nella cartella `mib` del
+programma e si può salvare dalla pagina SNMP. Importalo nel sistema di monitoraggio per vedere i nomi.
+
+La regola firewall del setup consente già al programma del relay di ricevere UDP. Se non l'hai scelta, consenti
+la porta UDP 1161 in ingresso dal sistema di monitoraggio.
+
+> **Nota sull'OID.** `99999` è un segnaposto: NEXQ S.r.l. non ha ancora un private enterprise number assegnato da
+> IANA. I numeri cambieranno nella release successiva all'assegnazione (i nomi nella MIB no), quindi nel sistema di
+> monitoraggio preferisci i nomi della MIB.
+
+> SNMP v1 e v2c trasmettono community e valori in chiaro. Tieni l'agente su una rete di gestione e limitalo
+> all'indirizzo del sistema di monitoraggio come descritto sopra.
+
 ## Riferimento della configurazione
 
 La console scrive `appsettings.json` per te. Ogni impostazione si può anche definire con una variabile di ambiente
@@ -327,20 +426,25 @@ La console scrive `appsettings.json` per te. Ogni impostazione si può anche def
 | `Security.RejectWhenAllowListEmpty` | `true` | Con l'elenco vuoto rifiuta tutti |
 | `Tls.Mode` | `None` | `None`, `StartTlsOptional`, `StartTlsRequired` |
 | `Tls.CertificateThumbprint` / `CertificatePath` | vuoto | Certificato per STARTTLS |
-| `Upstream.Mode` | `Microsoft365` | `Microsoft365`, `Basic`, `Anonymous` |
+| `Upstream.Mode` | `Microsoft365` | `Microsoft365`, `AzureCommunicationServices`, `Basic`, `Anonymous` |
 | `Upstream.Host` / `Port` / `Security` | `smtp.office365.com` / `587` / `StartTls` | Lo smart host. Sicurezza: `StartTls`, `SslOnConnect`, `Auto`, `StartTlsWhenAvailable`, `None` |
 | `Upstream.AllowInsecureAuthentication` | `false` | Consente le credenziali su una connessione che potrebbe essere in chiaro |
 | `Upstream.MaxAttempts` / `RetryBaseDelaySeconds` | `3` / `5` | Nuovi tentativi sugli errori temporanei |
 | `Upstream.OverrideFromAddress` | vuoto | Mittente di busta fisso |
-| `Upstream.Microsoft365.*` | | `TenantId`, `ClientId`, `SenderUsername`, `ClientSecretName` |
+| `Upstream.Microsoft365.*` | | `TenantId`, `ClientId`, `SenderUsername`, `Credential` (`ClientSecret` o `Certificate`), `ClientSecretName`, `CertificateThumbprint` |
+| `Upstream.AzureCommunication.*` | | `TenantId`, `ClientId`, `SmtpUsername`, `Credential` (`ClientSecret` o `Certificate`), `ClientSecretName`, `CertificateThumbprint` |
 | `Upstream.Basic.*` | | `Username`, `PasswordSecret` |
 | `Logging.MinimumLevel` | `Information` | Da `Verbose` a `Fatal` |
 | `Logging.RetainedFileTimeLimitDays` / `RetainedFileCountLimit` | `31` / `31` | Conservazione |
 | `Logging.AuditTrail` / `EventLog` | `true` / `true` | File di audit e registro eventi di Windows |
 | `Delivery.SpoolFailedMessages` / `FailedSpoolRetentionDays` | `true` / `30` | Copie dei messaggi non consegnati |
 | `Updates.CheckOnStartup` | `true` | La console cerca una versione più recente all'apertura |
+| `Snmp.Enabled` | `false` | Attiva l'agente SNMP |
+| `Snmp.IpAddress` / `Port` | `0.0.0.0` / `1161` | Dove ascolta l'agente SNMP (UDP) |
+| `Snmp.AllowedManagers` | vuoto | Indirizzi e reti CIDR dei sistemi di monitoraggio; vuoto non risponde a nessuno |
+| `Snmp.CommunitySecret` | `SnmpCommunity` | Nome del segreto salvato che contiene la community |
 
-I segreti (`M365ClientSecret`, `UpstreamPassword`, `TlsCertPassword`) non sono mai in questo file: le impostazioni
+I segreti (`M365ClientSecret`, `AcsClientSecret`, `UpstreamPassword`, `TlsCertPassword`, `SnmpCommunity`) non sono mai in questo file: le impostazioni
 contengono solo il *nome* del segreto, il valore è nello store cifrato.
 
 ### Riga di comando
@@ -357,6 +461,18 @@ contengono solo il *nome* del segreto, il valore è nello store cifrato.
 | `test-upstream` | Si connette e accede allo smart host |
 | `show-config` | Mostra la configurazione effettiva, gli avvisi e gli errori |
 
+## Il servizio non parte
+
+| Cosa vedi | Perché | Cosa fare |
+|---|---|---|
+| Il servizio parte e si ferma subito (*Il servizio su Computer locale è stato avviato e poi arrestato*) | Le impostazioni sono incomplete o non valide, tipicamente subito dopo l'installazione | Apri la console: la pagina Overview elenca cosa manca. Oppure esegui `SmtpRelay.exe show-config` |
+| *Errore 1053: il servizio non ha risposto alla richiesta di avvio o controllo in modo tempestivo* | La versione 2.0.0 terminava così ogni volta che le impostazioni non erano valide. Dalla 2.1.0 il servizio risponde prima a Windows e poi si ferma | Aggiorna alla 2.1.0 o successiva e completa le impostazioni come sopra. Se succede ancora, guarda il registro eventi Applicazione (origini `SmtpRelay` e `.NET Runtime`) |
+| *Accesso negato* (errore 5), evento 1121 di Microsoft Defender | Un prodotto di sicurezza blocca il programma | Vedi [Antivirus, SmartScreen e firma](#antivirus-smartscreen-e-firma) |
+| Gira un istante, il log dice che la porta è in uso | Un altro programma ascolta sulla porta, di solito il servizio SMTP di IIS | Ferma quel programma, oppure cambia la porta nella pagina Listener |
+
+Il motivo è sempre scritto in `C:\ProgramData\SmtpRelay\logs\smtp-relay-YYYYMMDD.log` e nel registro eventi
+Applicazione di Windows, origine `SmtpRelay`.
+
 ## Aggiornamento e rimozione
 
 **Aggiornamento.** Quando su GitHub c'è una versione più recente la console mostra *Update available*. *About &
@@ -364,11 +480,21 @@ updates > Download and install* scarica il setup, confronta il suo SHA-256 con q
 che sia firmato da NEXQ S.r.l., poi lo installa: il relay si ferma per circa un minuto e riparte. Impostazioni,
 segreti e log restano. Puoi anche eseguire a mano un setup più recente; il risultato è lo stesso.
 
+**Provenendo dalla 2.0.0.** Quella versione era installata in `C:\Program Files\NEXQ\SMTP Relay`. Il setup della
+2.1.0 sposta il programma in `C:\Program Files\SMTP Relay`, porta con sé `appsettings.json`, fa puntare il servizio
+alla nuova cartella e rimuove la vecchia. I dati in `C:\ProgramData\SmtpRelay` non si spostano.
+
 **Rimozione.** *Impostazioni > App* (o *Programmi e funzionalità*) > *NEXQ SMTP Relay* > *Disinstalla*. Il servizio
 e la regola del firewall vengono rimossi. Il setup chiede se eliminare anche impostazioni, segreti e log; per
 impostazione predefinita vengono conservati.
 
 ## Stato del progetto
+
+La versione 2.1.0 aggiunge Azure Communication Services, le credenziali con certificato e l'agente SNMP. L'agente
+SNMP è provato con un client SNMP indipendente, e le due modalità OAuth2 con un server di prova. **L'accesso ai veri
+Microsoft 365 e Azure Communication Services con certificato non è coperto dai test automatici** (serve un tenant):
+usa **Test connection** prima di farci affidamento. Lo spostamento di una installazione 2.0.0 nella nuova cartella è
+fatto dal setup e ha lo stesso stato del resto del setup, descritto sotto.
 
 La versione 2.0.0 è la prima con il setup, la console e il meccanismo di aggiornamento. Il relay vero e proprio
 (elenco IP, limiti, inoltro, nuovi tentativi, audit, segreti) e la verifica degli aggiornamenti sono coperti da una

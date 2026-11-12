@@ -25,6 +25,8 @@ public partial class MainWindow : Window
 
         _vm.AllowedIps.CollectionChanged += (_, _) => UpdateEmptyIpText();
         UpdateEmptyIpText();
+        _vm.SnmpManagers.CollectionChanged += (_, _) => UpdateEmptyManagerText();
+        UpdateEmptyManagerText();
 
         // While the administrator types, keep the validation and the "unsaved changes" state current.
         _editTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
@@ -74,6 +76,9 @@ public partial class MainWindow : Window
 
     private void UpdateEmptyIpText()
         => EmptyIpText.Visibility = _vm.AllowedIps.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+
+    private void UpdateEmptyManagerText()
+        => EmptyManagerText.Visibility = _vm.SnmpManagers.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
 
     // ----- helpers ---------------------------------------------------------------------------------------
 
@@ -204,7 +209,10 @@ public partial class MainWindow : Window
     // ----- secrets ---------------------------------------------------------------------------------------
 
     private void StoreClientSecret_Click(object sender, RoutedEventArgs e)
-        => StoreSecret(_vm.Options.Upstream.Microsoft365.ClientSecretName, ClientSecretBox);
+        => StoreSecret(_vm.EntraApp.ClientSecretName, ClientSecretBox);
+
+    private void StoreCommunity_Click(object sender, RoutedEventArgs e)
+        => StoreSecret(_vm.Options.Snmp.CommunitySecret, CommunityBox);
 
     private void StorePassword_Click(object sender, RoutedEventArgs e)
         => StoreSecret(_vm.Options.Upstream.Basic.PasswordSecret, PasswordBoxBasic);
@@ -244,6 +252,123 @@ public partial class MainWindow : Window
         {
             PfxPathBox.Text = dialog.FileName;
             _vm.Revalidate();
+        }
+    }
+
+    // ----- certificate of the app registration -----------------------------------------------------------
+
+    private void CreateCertificate_Click(object sender, RoutedEventArgs e)
+    {
+        var answer = MessageBox.Show(this,
+            "Create a new self-signed certificate for the app registration?\n\n" +
+            "It is stored in the computer store (Local Machine > Personal) with a private key that cannot be exported, " +
+            "and is valid for two years. You then upload its public part (.cer) to the app registration in Microsoft Entra ID.",
+            Title, MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.Yes);
+        if (answer != MessageBoxResult.Yes)
+            return;
+
+        try
+        {
+            using var certificate = _vm.CreateEntraCertificate();
+            ExportCertificate();
+        }
+        catch (Exception ex)
+        {
+            ShowError("The certificate was not created:\n" + ex.Message);
+        }
+    }
+
+    private void ExportCertificate_Click(object sender, RoutedEventArgs e) => ExportCertificate();
+
+    private void ExportCertificate()
+    {
+        var dialog = new SaveFileDialog
+        {
+            Title = "Save the public certificate to upload to the app registration",
+            Filter = "Certificate (*.cer)|*.cer",
+            FileName = "SmtpRelay-" + Environment.MachineName + ".cer",
+            OverwritePrompt = true
+        };
+        if (dialog.ShowDialog(this) != true)
+            return;
+
+        try
+        {
+            _vm.ExportEntraCertificate(dialog.FileName);
+            ShowInfo("Public certificate saved:\n" + dialog.FileName + "\n\n" +
+                     "Upload it to the app registration: Microsoft Entra ID > App registrations > your application > " +
+                     "Certificates & secrets > Certificates > Upload certificate.");
+        }
+        catch (Exception ex)
+        {
+            ShowError("The certificate was not exported:\n" + ex.Message);
+        }
+    }
+
+    // ----- SNMP ------------------------------------------------------------------------------------------
+
+    private void AddManager_Click(object sender, RoutedEventArgs e) => AddManager();
+
+    private void NewManagerBox_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter)
+        {
+            AddManager();
+            e.Handled = true;
+        }
+    }
+
+    private void AddManager()
+    {
+        var error = _vm.AddSnmpManager(NewManagerBox.Text);
+        NewManagerError.Text = error ?? "";
+        NewManagerError.Visibility = error is null ? Visibility.Collapsed : Visibility.Visible;
+        if (error is null)
+            NewManagerBox.Clear();
+        NewManagerBox.Focus();
+    }
+
+    private void RemoveManager_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: string entry })
+            _vm.RemoveSnmpManager(entry);
+    }
+
+    private void SaveMib_Click(object sender, RoutedEventArgs e)
+    {
+        var source = MainViewModel.MibFilePath;
+        if (source is null)
+        {
+            ShowInfo("The MIB file is not installed next to the console. Download it from the release page on GitHub.");
+            return;
+        }
+
+        var dialog = new SaveFileDialog
+        {
+            Title = "Save the MIB file",
+            Filter = "MIB module (*.txt;*.mib)|*.txt;*.mib|All files (*.*)|*.*",
+            FileName = Path.GetFileName(source),
+            OverwritePrompt = true
+        };
+        if (dialog.ShowDialog(this) != true)
+            return;
+
+        try
+        {
+            File.Copy(source, dialog.FileName, overwrite: true);
+        }
+        catch (Exception ex)
+        {
+            ShowError("The MIB file was not saved:\n" + ex.Message);
+        }
+    }
+
+    private void CopyOid_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: string text })
+        {
+            try { Clipboard.SetText(text); }
+            catch (Exception) { /* the clipboard is busy: nothing useful to do */ }
         }
     }
 

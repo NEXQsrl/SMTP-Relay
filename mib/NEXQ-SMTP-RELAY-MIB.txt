@@ -1,0 +1,82 @@
+NEXQ-SMTP-RELAY-MIB DEFINITIONS ::= BEGIN
+
+--
+-- MIB module of the NEXQ SMTP Relay built-in SNMP agent.
+--
+-- NOTE: 99999 is a placeholder, not a private enterprise number assigned by IANA to NEXQ S.r.l.
+-- It will change once the number is assigned; object names and the layout below it will not.
+--
+
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, Gauge32, enterprises
+        FROM SNMPv2-SMI
+    MODULE-COMPLIANCE, OBJECT-GROUP
+        FROM SNMPv2-CONF;
+
+nexqSmtpRelayMIB MODULE-IDENTITY
+    LAST-UPDATED "202611120000Z"
+    ORGANIZATION "NEXQ S.r.l."
+    CONTACT-INFO
+        "NEXQ S.r.l.
+         https://www.nexq.it
+         https://github.com/NEXQsrl/SMTP-Relay"
+    DESCRIPTION
+        "Delivery figures of the NEXQ SMTP Relay, a Windows SMTP relay that
+         accepts mail from allowed internal senders and forwards it to a
+         smart host."
+    REVISION "202611120000Z"
+    DESCRIPTION
+        "First version: messages delivered and failed today."
+    ::= { nexqProducts 1 }
+
+nexq          OBJECT IDENTIFIER ::= { enterprises 99999 }
+nexqProducts  OBJECT IDENTIFIER ::= { nexq 1 }
+
+smtpRelayObjects      OBJECT IDENTIFIER ::= { nexqSmtpRelayMIB 1 }
+smtpRelayConformance  OBJECT IDENTIFIER ::= { nexqSmtpRelayMIB 2 }
+
+smtpRelayDeliveredToday OBJECT-TYPE
+    SYNTAX      Gauge32
+    UNITS       "messages"
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Messages accepted from a client and forwarded to the smart host
+         since midnight, local time of the relay. A message with several
+         recipients counts once. The value goes back to zero at midnight
+         and is kept across restarts of the service when the audit trail
+         is enabled."
+    ::= { smtpRelayObjects 1 }
+
+smtpRelayFailedToday OBJECT-TYPE
+    SYNTAX      Gauge32
+    UNITS       "messages"
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Messages accepted from a client that could not be forwarded to the
+         smart host since midnight, local time of the relay: the client
+         received a temporary (451) or permanent (554) error. A client that
+         retries the same message is counted at every attempt. The value
+         goes back to zero at midnight."
+    ::= { smtpRelayObjects 2 }
+
+smtpRelayCompliances  OBJECT IDENTIFIER ::= { smtpRelayConformance 1 }
+smtpRelayGroups       OBJECT IDENTIFIER ::= { smtpRelayConformance 2 }
+
+smtpRelayCompliance MODULE-COMPLIANCE
+    STATUS      current
+    DESCRIPTION
+        "What an agent that implements this module provides."
+    MODULE
+        MANDATORY-GROUPS { smtpRelayDeliveryGroup }
+    ::= { smtpRelayCompliances 1 }
+
+smtpRelayDeliveryGroup OBJECT-GROUP
+    OBJECTS     { smtpRelayDeliveredToday, smtpRelayFailedToday }
+    STATUS      current
+    DESCRIPTION
+        "Delivery figures of the current day."
+    ::= { smtpRelayGroups 1 }
+
+END

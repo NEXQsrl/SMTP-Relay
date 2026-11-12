@@ -60,6 +60,8 @@
                     <TextBlock Text="MONITORING" Foreground="{StaticResource NavMuted}" FontSize="10.5" FontWeight="SemiBold" Margin="24,18,0,6" />
                     <RadioButton Style="{StaticResource NavItem}" GroupName="Nav" Tag="&#xE8A5;" Content="Logs"
                                  IsChecked="{Binding Page, Converter={StaticResource Eq}, ConverterParameter=Logs}" />
+                    <RadioButton Style="{StaticResource NavItem}" GroupName="Nav" Tag="&#xE9D9;" Content="SNMP"
+                                 IsChecked="{Binding Page, Converter={StaticResource Eq}, ConverterParameter=Snmp}" />
                     <RadioButton Style="{StaticResource NavItem}" GroupName="Nav" Tag="&#xE946;" Content="About &amp; updates"
                                  IsChecked="{Binding Page, Converter={StaticResource Eq}, ConverterParameter=About}" />
                 </StackPanel>
@@ -380,22 +382,31 @@
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="12" />
                                         <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="12" />
-                                        <ColumnDefinition Width="*" />
                                     </Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="12" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
                                     <RadioButton Style="{StaticResource Choice}" GroupName="Mode" IsChecked="{Binding IsMicrosoft365}">
                                         <StackPanel>
                                             <TextBlock Text="Microsoft 365" FontWeight="SemiBold" />
                                             <TextBlock Style="{StaticResource Hint}" Margin="0,3,0,0" Text="Modern authentication (OAuth2) with an app registration. No mailbox password." />
                                         </StackPanel>
                                     </RadioButton>
-                                    <RadioButton Grid.Column="2" Style="{StaticResource Choice}" GroupName="Mode" IsChecked="{Binding IsBasic}">
+                                    <RadioButton Grid.Column="2" Style="{StaticResource Choice}" GroupName="Mode" IsChecked="{Binding IsAzureCommunication}">
+                                        <StackPanel>
+                                            <TextBlock Text="Azure Communication Services" FontWeight="SemiBold" />
+                                            <TextBlock Style="{StaticResource Hint}" Margin="0,3,0,0" Text="Azure's e-mail service, with an app registration (OAuth2). No mailbox needed." />
+                                        </StackPanel>
+                                    </RadioButton>
+                                    <RadioButton Grid.Row="2" Style="{StaticResource Choice}" GroupName="Mode" IsChecked="{Binding IsBasic}">
                                         <StackPanel>
                                             <TextBlock Text="User name and password" FontWeight="SemiBold" />
                                             <TextBlock Style="{StaticResource Hint}" Margin="0,3,0,0" Text="Any SMTP server or provider that accepts SMTP AUTH." />
                                         </StackPanel>
                                     </RadioButton>
-                                    <RadioButton Grid.Column="4" Style="{StaticResource Choice}" GroupName="Mode" IsChecked="{Binding IsAnonymous}">
+                                    <RadioButton Grid.Row="2" Grid.Column="2" Style="{StaticResource Choice}" GroupName="Mode" IsChecked="{Binding IsAnonymous}">
                                         <StackPanel>
                                             <TextBlock Text="No authentication" FontWeight="SemiBold" />
                                             <TextBlock Style="{StaticResource Hint}" Margin="0,3,0,0" Text="A server that trusts this computer's IP, such as an Exchange connector." />
@@ -405,12 +416,11 @@
                             </StackPanel>
                         </Border>
 
-                        <!-- Microsoft 365 -->
-                        <Border Style="{StaticResource CardBorder}" Visibility="{Binding IsMicrosoft365, Converter={StaticResource Vis}}">
+                        <!-- Microsoft Entra application: Microsoft 365 and Azure Communication Services -->
+                        <Border Style="{StaticResource CardBorder}" Visibility="{Binding UsesEntraApp, Converter={StaticResource Vis}}">
                             <StackPanel>
-                                <TextBlock Text="Microsoft 365 app registration" Style="{StaticResource H2}" />
-                                <TextBlock Style="{StaticResource Sub}" Margin="0,0,0,16"
-                                           Text="Register an application in Microsoft Entra ID with the application permission SMTP.SendAsApp, then register its service principal in Exchange Online and give it access to the sending mailbox. The README explains each step." />
+                                <TextBlock Text="{Binding EntraCardTitle}" Style="{StaticResource H2}" />
+                                <TextBlock Style="{StaticResource Sub}" Margin="0,0,0,16" Text="{Binding EntraCardIntro}" />
                                 <Grid>
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*" />
@@ -419,40 +429,70 @@
                                     </Grid.ColumnDefinitions>
                                     <StackPanel>
                                         <TextBlock Text="Tenant ID or domain" Style="{StaticResource Label}" />
-                                        <TextBox Text="{Binding Options.Upstream.Microsoft365.TenantId, UpdateSourceTrigger=PropertyChanged}" />
+                                        <TextBox Text="{Binding EntraApp.TenantId, UpdateSourceTrigger=PropertyChanged}" />
                                     </StackPanel>
                                     <StackPanel Grid.Column="2">
                                         <TextBlock Text="Application (client) ID" Style="{StaticResource Label}" />
-                                        <TextBox Text="{Binding Options.Upstream.Microsoft365.ClientId, UpdateSourceTrigger=PropertyChanged}" />
+                                        <TextBox Text="{Binding EntraApp.ClientId, UpdateSourceTrigger=PropertyChanged}" />
                                     </StackPanel>
                                 </Grid>
-                                <Grid Margin="0,16,0,0">
+                                <TextBlock Text="{Binding EntraIdentityLabel}" Style="{StaticResource Label}" Margin="0,16,0,6" />
+                                <TextBox Text="{Binding EntraIdentity, UpdateSourceTrigger=PropertyChanged}" />
+                                <TextBlock Style="{StaticResource Hint}" Text="{Binding EntraIdentityHint}" />
+
+                                <TextBlock Text="The application proves its identity with" Style="{StaticResource Label}" Margin="0,20,0,8" />
+                                <Grid>
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="20" />
+                                        <ColumnDefinition Width="12" />
                                         <ColumnDefinition Width="*" />
                                     </Grid.ColumnDefinitions>
-                                    <StackPanel>
-                                        <TextBlock Text="Sending mailbox (UPN)" Style="{StaticResource Label}" />
-                                        <TextBox Text="{Binding Options.Upstream.Microsoft365.SenderUsername, UpdateSourceTrigger=PropertyChanged}" />
-                                        <TextBlock Style="{StaticResource Hint}" Text="For example relay@contoso.com." />
-                                    </StackPanel>
-                                    <StackPanel Grid.Column="2">
-                                        <Grid>
-                                            <TextBlock Text="Client secret" Style="{StaticResource Label}" />
-                                            <TextBlock Text="{Binding ClientSecretStatus}" HorizontalAlignment="Right" FontSize="12" Foreground="{StaticResource TextMuted}" />
-                                        </Grid>
-                                        <Grid>
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="*" />
-                                                <ColumnDefinition Width="Auto" />
-                                            </Grid.ColumnDefinitions>
-                                            <PasswordBox x:Name="ClientSecretBox" />
-                                            <Button Grid.Column="1" Content="Store" Style="{StaticResource SecondaryButton}" Margin="8,0,0,0" Click="StoreClientSecret_Click" />
-                                        </Grid>
-                                        <TextBlock Style="{StaticResource Hint}" Text="Encrypted with Windows DPAPI on this computer. It is never written to the settings file and never shown again." />
-                                    </StackPanel>
+                                    <RadioButton Style="{StaticResource Choice}" GroupName="Credential" IsChecked="{Binding UsesClientSecret}">
+                                        <StackPanel>
+                                            <TextBlock Text="A client secret" FontWeight="SemiBold" />
+                                            <TextBlock Style="{StaticResource Hint}" Margin="0,3,0,0" Text="A password generated by Microsoft Entra ID. It expires and must be replaced here when it does." />
+                                        </StackPanel>
+                                    </RadioButton>
+                                    <RadioButton Grid.Column="2" Style="{StaticResource Choice}" GroupName="Credential" IsChecked="{Binding UsesCertificate}">
+                                        <StackPanel>
+                                            <TextBlock Text="A certificate" FontWeight="SemiBold" />
+                                            <TextBlock Style="{StaticResource Hint}" Margin="0,3,0,0" Text="The private key never leaves this computer; only the public part is uploaded to the app registration." />
+                                        </StackPanel>
+                                    </RadioButton>
                                 </Grid>
+
+                                <StackPanel Margin="0,16,0,0" Visibility="{Binding UsesClientSecret, Converter={StaticResource Vis}}">
+                                    <Grid>
+                                        <TextBlock Text="Client secret" Style="{StaticResource Label}" />
+                                        <TextBlock Text="{Binding ClientSecretStatus}" HorizontalAlignment="Right" FontSize="12" Foreground="{StaticResource TextMuted}" />
+                                    </Grid>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <PasswordBox x:Name="ClientSecretBox" />
+                                        <Button Grid.Column="1" Content="Store" Style="{StaticResource SecondaryButton}" Margin="8,0,0,0" Click="StoreClientSecret_Click" />
+                                    </Grid>
+                                    <TextBlock Style="{StaticResource Hint}" Text="Encrypted with Windows DPAPI on this computer. It is never written to the settings file and never shown again." />
+                                </StackPanel>
+
+                                <StackPanel Margin="0,16,0,0" Visibility="{Binding UsesCertificate, Converter={StaticResource Vis}}">
+                                    <Grid>
+                                        <TextBlock Text="Certificate from the computer store" Style="{StaticResource Label}" />
+                                        <TextBlock Text="{Binding EntraCertificateStatus}" HorizontalAlignment="Right" FontSize="12" Foreground="{StaticResource TextMuted}" />
+                                    </Grid>
+                                    <ComboBox ItemsSource="{Binding Certificates}" DisplayMemberPath="Display" SelectedValuePath="Thumbprint"
+                                              SelectedValue="{Binding EntraCertificateThumbprint}" />
+                                    <TextBlock Text="Thumbprint" Style="{StaticResource Label}" Margin="0,14,0,6" />
+                                    <TextBox Text="{Binding EntraCertificateThumbprint, UpdateSourceTrigger=PropertyChanged}" FontFamily="{StaticResource Mono}" />
+                                    <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+                                        <Button Content="Create a certificate…" Style="{StaticResource SecondaryButton}" Click="CreateCertificate_Click" Margin="0,0,8,0" />
+                                        <Button Content="Export the public certificate (.cer)…" Style="{StaticResource SecondaryButton}" Click="ExportCertificate_Click" />
+                                    </StackPanel>
+                                    <TextBlock Style="{StaticResource Hint}" Margin="0,10,0,0"
+                                               Text="The certificate must be in Local Machine &gt; Personal with its private key, and its public part (.cer) must be uploaded to the app registration under Certificates &amp; secrets. When the service runs as a dedicated account, give that account read access to the private key." />
+                                </StackPanel>
                             </StackPanel>
                         </Border>
 
@@ -760,6 +800,129 @@
                         </Grid>
                     </Border>
                 </Grid>
+
+                <!-- ============ SNMP ============ -->
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Visibility="{Binding Page, Converter={StaticResource PageVis}, ConverterParameter=Snmp}">
+                    <StackPanel Margin="32,0,32,16">
+                        <Border Style="{StaticResource CardBorder}">
+                            <StackPanel>
+                                <TextBlock Text="SNMP agent" Style="{StaticResource H2}" />
+                                <TextBlock Style="{StaticResource Sub}" Margin="0,0,0,12"
+                                           Text="The relay answers read-only SNMP v1 and v2c requests itself. It does not replace or change the Windows SNMP service: that keeps UDP port 161, and this agent listens on the port below. Point your monitoring system to this computer and this port." />
+                                <CheckBox Style="{StaticResource Switch}" IsChecked="{Binding SnmpEnabled}" Content="Answer SNMP requests" />
+                                <Grid Margin="0,16,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="2*" />
+                                        <ColumnDefinition Width="20" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="20" />
+                                        <ColumnDefinition Width="2*" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="Listen on address" Style="{StaticResource Label}" />
+                                        <TextBox Text="{Binding Options.Snmp.IpAddress, UpdateSourceTrigger=PropertyChanged}" />
+                                        <TextBlock Style="{StaticResource Hint}" Text="0.0.0.0 listens on every network interface." />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2">
+                                        <TextBlock Text="UDP port" Style="{StaticResource Label}" />
+                                        <TextBox Text="{Binding Options.Snmp.Port, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="4">
+                                        <Grid>
+                                            <TextBlock Text="Community" Style="{StaticResource Label}" />
+                                            <TextBlock Text="{Binding SnmpCommunityStatus}" HorizontalAlignment="Right" FontSize="12" Foreground="{StaticResource TextMuted}" />
+                                        </Grid>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <PasswordBox x:Name="CommunityBox" />
+                                            <Button Grid.Column="1" Content="Store" Style="{StaticResource SecondaryButton}" Margin="8,0,0,0" Click="StoreCommunity_Click" />
+                                        </Grid>
+                                        <TextBlock Style="{StaticResource Hint}" Text="The password of SNMP v2c. Kept encrypted; takes effect at once." />
+                                    </StackPanel>
+                                </Grid>
+                                <TextBlock Style="{StaticResource Hint}" Margin="0,12,0,0"
+                                           Text="Turning the agent on or off, and changing the address or the port, needs a restart of the service. If you chose the Windows Firewall option in the setup, the monitoring system can already reach the relay program." />
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource CardBorder}">
+                            <StackPanel>
+                                <TextBlock Text="Monitoring systems allowed to ask" Style="{StaticResource H2}" />
+                                <TextBlock Style="{StaticResource Sub}" Margin="0,0,0,16"
+                                           Text="Requests from any other address are ignored without an answer. Use single addresses or networks in CIDR notation. While the list is empty nobody is answered." />
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBox x:Name="NewManagerBox" KeyDown="NewManagerBox_KeyDown" />
+                                    <Button Grid.Column="1" Content="Add" Style="{StaticResource PrimaryButton}" Margin="10,0,0,0" Click="AddManager_Click" />
+                                </Grid>
+                                <TextBlock x:Name="NewManagerError" Foreground="{StaticResource Danger}" FontSize="12" Margin="0,6,0,0" Visibility="Collapsed" />
+                                <Border BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="8" Margin="0,14,0,0" MinHeight="48">
+                                    <Grid>
+                                        <TextBlock Text="The list is empty." Foreground="{StaticResource TextMuted}" Margin="14" x:Name="EmptyManagerText" />
+                                        <ItemsControl ItemsSource="{Binding SnmpManagers}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Border BorderBrush="{StaticResource Line}" BorderThickness="0,0,0,1" Padding="14,0">
+                                                        <Grid Height="40">
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="Auto" />
+                                                                <ColumnDefinition Width="*" />
+                                                                <ColumnDefinition Width="Auto" />
+                                                            </Grid.ColumnDefinitions>
+                                                            <TextBlock Text="&#xE9D9;" Style="{StaticResource Icon}" Foreground="{StaticResource Ok}" Margin="0,0,12,0" />
+                                                            <TextBlock Grid.Column="1" Text="{Binding}" FontFamily="{StaticResource Mono}" FontSize="13" VerticalAlignment="Center" />
+                                                            <Button Grid.Column="2" Content="Remove" Style="{StaticResource LinkButton}" Foreground="{StaticResource Danger}"
+                                                                    VerticalAlignment="Center" Click="RemoveManager_Click" Tag="{Binding}" />
+                                                        </Grid>
+                                                    </Border>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </Grid>
+                                </Border>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource CardBorder}">
+                            <StackPanel>
+                                <TextBlock Text="What to read" Style="{StaticResource H2}" />
+                                <TextBlock Style="{StaticResource Sub}" Margin="0,0,0,14"
+                                           Text="Both values are the same figures shown on the Overview page. They count messages, not recipients, and go back to zero at midnight (local time)." />
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="24" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="34" />
+                                        <RowDefinition Height="34" />
+                                    </Grid.RowDefinitions>
+                                    <TextBlock Text="Delivered today (Gauge32)" VerticalAlignment="Center" FontWeight="SemiBold" />
+                                    <TextBlock Grid.Column="2" Text="{Binding SnmpDeliveredOid, Mode=OneWay}" FontFamily="{StaticResource Mono}" VerticalAlignment="Center" />
+                                    <Button Grid.Column="3" Content="Copy" Style="{StaticResource LinkButton}" VerticalAlignment="Center" Click="CopyOid_Click" Tag="{Binding SnmpDeliveredOid, Mode=OneWay}" />
+                                    <TextBlock Grid.Row="1" Text="Failed today (Gauge32)" VerticalAlignment="Center" FontWeight="SemiBold" />
+                                    <TextBlock Grid.Row="1" Grid.Column="2" Text="{Binding SnmpFailedOid, Mode=OneWay}" FontFamily="{StaticResource Mono}" VerticalAlignment="Center" />
+                                    <Button Grid.Row="1" Grid.Column="3" Content="Copy" Style="{StaticResource LinkButton}" VerticalAlignment="Center" Click="CopyOid_Click" Tag="{Binding SnmpFailedOid, Mode=OneWay}" />
+                                </Grid>
+                                <TextBlock Text="Example with Net-SNMP" Style="{StaticResource Label}" Margin="0,16,0,6" />
+                                <TextBox Text="{Binding SnmpExample, Mode=OneWay}" IsReadOnly="True" FontFamily="{StaticResource Mono}" FontSize="12" />
+                                <StackPanel Orientation="Horizontal" Margin="0,16,0,0">
+                                    <Button Content="Save the MIB file…" Style="{StaticResource SecondaryButton}" Click="SaveMib_Click" />
+                                </StackPanel>
+                                <TextBlock Style="{StaticResource Hint}" Margin="0,10,0,0"
+                                           Text="Import the MIB file (NEXQ-SMTP-RELAY-MIB) into your monitoring system to see the names instead of the numbers. The agent also answers sysDescr, sysObjectID, sysUpTime and sysName, so it can be added as a device." />
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
 
                 <!-- ============ About ============ -->
                 <ScrollViewer VerticalScrollBarVisibility="Auto" Visibility="{Binding Page, Converter={StaticResource PageVis}, ConverterParameter=About}">

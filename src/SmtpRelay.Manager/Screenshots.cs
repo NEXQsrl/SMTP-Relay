@@ -39,7 +39,8 @@ internal static class Screenshots
                         ClientId = "7c1a2b3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
                         SenderUsername = "relay@contoso.com"
                     }
-                }
+                },
+                Snmp = { Enabled = true, AllowedManagers = { "192.168.20.15", "10.20.9.0/24" } }
             };
             ConfigLoader.Save(temp, sample);
 
@@ -74,14 +75,14 @@ internal static class Screenshots
             var window = new MainWindow(vm) { Width = 1180, Height = 840, ShowInTaskbar = false, WindowStartupLocation = WindowStartupLocation.Manual, Left = -4000, Top = 0 };
             window.Show();
 
-            foreach (var page in new[] { "Overview", "Listener", "Access", "SmartHost", "Tls", "Logging", "Logs", "About" })
+            foreach (var page in new[] { "Overview", "Listener", "Access", "SmartHost", "Tls", "Logging", "Logs", "Snmp", "About" })
             {
                 if (page == "About")
                 {
                     vm.SetRelease(new ReleaseInfo(
-                        new Version(2, 1, 0, 0), "v2.1.0",
-                        "- Faster delivery: the connection to the smart host is reused between messages\n- New: daily summary of delivered and failed messages\n- Fixes and updated dependencies",
-                        AppInfo.ReleasesUrl, AppInfo.ReleasesUrl + "/download/v2.1.0/SmtpRelay-Setup-2.1.0.exe", "SmtpRelay-Setup-2.1.0.exe", 1, null), newer: true);
+                        new Version(2, 2, 0, 0), "v2.2.0",
+                        "- Faster delivery: the connection to the smart host is reused between messages\n- New: more figures for your monitoring system\n- Fixes and updated dependencies",
+                        AppInfo.ReleasesUrl, AppInfo.ReleasesUrl + "/download/v2.2.0/SmtpRelay-Setup-2.2.0.exe", "SmtpRelay-Setup-2.2.0.exe", 1, null), newer: true);
                 }
 
                 vm.Page = page;

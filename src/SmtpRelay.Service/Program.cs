@@ -7,11 +7,14 @@ using Serilog;
 using SmtpRelay;
 using SmtpRelay.Cli;
 using SmtpRelay.Configuration;
+using SmtpRelay.Monitoring;
 using SmtpRelay.Relay;
 using SmtpRelay.Security;
 using SmtpRelay.Smtp;
+using SmtpRelay.Snmp;
 
 var exeDir = AppContext.BaseDirectory;
+bool runningAsService = WindowsServiceHelpers.IsWindowsService();
 
 RelayOptions options;
 try
@@ -20,7 +23,10 @@ try
 }
 catch (Exception ex)
 {
-    Console.Error.WriteLine($"Cannot read {ConfigLoader.FileName} in {exeDir}: {ex.Message}");
+    var reason = $"Cannot read {ConfigLoader.FileName} in {exeDir}: {ex.Message}";
+    Console.Error.WriteLine(reason);
+    if (runningAsService)
+        await ServiceStartupFailure.ReportAsync(new RelayOptions(), reason);
     return 2;
 }
 
@@ -36,7 +42,6 @@ if (args.Length > 0)
 
 // Fail fast on an invalid configuration.
 var errors = RelayOptionsValidator.Validate(options);
-bool runningAsService = WindowsServiceHelpers.IsWindowsService();
 
 try
 {
@@ -61,20 +66,23 @@ if (errors.Count > 0)
     foreach (var error in errors)
         Console.Error.WriteLine("  - " + error);
 
-    // A service has no console: leave the reason where the administrator will look for it.
-    try
-    {
-        using var startupLog = LoggingSetup.CreateLogger(options, runningAsService);
-        startupLog.ForContext("SourceContext", "SmtpRelay.Startup")
-            .Fatal("The service cannot start, the configuration is not valid: {Errors}", string.Join(" | ", errors));
-    }
-    catch (Exception) { /* the log folder itself may be what is wrong */ }
+    // A service that exits before it has answered the service control manager is reported by Windows as
+    // "error 1053: the service did not respond", which says nothing. Answer first, then stop with the reason
+    // in the application log and in the Windows event log.
+    var reason = "The configuration is not valid (open the SMTP Relay console, or run 'SmtpRelay show-config'): " +
+                 string.Join(" | ", errors);
+    if (runningAsService)
+        await ServiceStartupFailure.ReportAsync(options, reason);
+    else
+        ServiceStartupFailure.WriteToLog(options, runningAsService, reason);
     return 2;
 }
 
-Log.Logger = LoggingSetup.CreateLogger(options, runningAsService);
+bool hostStarted = false;
 try
 {
+    Log.Logger = LoggingSetup.CreateLogger(options, runningAsService);
+
     foreach (var warning in RelayOptionsValidator.Warnings(options))
         Log.Warning("Configuration: {Warning}", warning);
 
@@ -91,27 +99,40 @@ try
     // Options
     builder.Services.AddSingleton(options);
     builder.Services.AddSingleton(options.Upstream);
-    builder.Services.AddSingleton(options.Upstream.Microsoft365);
 
     // Security and secrets
     builder.Services.AddSingleton(SecretStore.Open(options));
     builder.Services.AddSingleton(new IpAllowList(options.Security.AllowedIps, options.Security.RejectWhenAllowListEmpty));
 
     // Outbound relay
-    builder.Services.AddSingleton<IM365TokenProvider, Microsoft365TokenProvider>();
+    builder.Services.AddSingleton<IAccessTokenProvider, EntraTokenProvider>();
     builder.Services.AddSingleton<IUpstreamSender, UpstreamSender>();
 
     // Listening SMTP server
+    builder.Services.AddSingleton(DeliveryCounters.FromAuditTrail(options.LogDirectory));
     builder.Services.AddHostedService<SmtpRelayHostedService>();
+
+    // Monitoring
+    if (options.Snmp.Enabled)
+        builder.Services.AddHostedService<SnmpAgentService>();
 
     var host = builder.Build();
     Log.Information("NEXQ SMTP Relay {Version} starting (service '{Service}').", AppInfo.Version, options.ServiceName);
+    hostStarted = true;
     await host.RunAsync();
     return Environment.ExitCode;
 }
 catch (Exception ex)
 {
     Log.Fatal(ex, "Fatal error while running the relay.");
+    Console.Error.WriteLine("Fatal error: " + ex.Message);
+
+    // Same as above: a failure before the host runs (secret store, log folder...) must not look like error 1053.
+    if (runningAsService && !hostStarted)
+    {
+        Log.CloseAndFlush();
+        await ServiceStartupFailure.ReportAsync(options, "The relay could not start: " + ex.Message, alreadyLogged: true);
+    }
     return 1;
 }
 finally

@@ -19,7 +19,7 @@ public static class CertificateLoader
 
         if (!string.IsNullOrWhiteSpace(tls.CertificateThumbprint))
         {
-            certificate = LoadFromStore(tls.CertificateThumbprint!);
+            certificate = CertificateFinder.FindInLocalMachine(tls.CertificateThumbprint);
             if (certificate is null)
                 logger.LogWarning("No certificate with thumbprint {Thumbprint} in LocalMachine\\My.", tls.CertificateThumbprint);
         }
@@ -61,14 +61,5 @@ public static class CertificateLoader
             logger.LogInformation("TLS certificate loaded: {Subject} (expires {NotAfter:d}).", certificate.Subject, certificate.NotAfter);
 
         return certificate;
-    }
-
-    private static X509Certificate2? LoadFromStore(string thumbprint)
-    {
-        var normalized = new string(thumbprint.Where(Uri.IsHexDigit).ToArray()).ToUpperInvariant();
-        using var store = new X509Store(StoreName.My, StoreLocation.LocalMachine);
-        store.Open(OpenFlags.ReadOnly);
-        var found = store.Certificates.Find(X509FindType.FindByThumbprint, normalized, validOnly: false);
-        return found.Count == 0 ? null : found[0];
     }
 }

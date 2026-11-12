@@ -98,17 +98,16 @@ public static partial class RelayOptionsValidator
                 break;
 
             case UpstreamAuthMode.Microsoft365:
-                var m = up.Microsoft365;
-                if (!TenantRegex().IsMatch(m.TenantId ?? ""))
-                    errors.Add("Upstream.Microsoft365.TenantId is required (tenant GUID or domain, for example contoso.onmicrosoft.com).");
-                if (!Guid.TryParse(m.ClientId, out _))
-                    errors.Add("Upstream.Microsoft365.ClientId is required (application ID, a GUID).");
-                if (!IsMailbox(m.SenderUsername))
+                ValidateEntraApplication(up.Microsoft365, "Upstream.Microsoft365", errors);
+                if (!IsMailbox(up.Microsoft365.SenderUsername))
                     errors.Add("Upstream.Microsoft365.SenderUsername is required (UPN of the sending mailbox).");
-                if (!IsValidName(m.ClientSecretName))
-                    errors.Add("Upstream.Microsoft365.ClientSecretName is required (name of the stored secret).");
-                if (!Uri.TryCreate(m.Scope, UriKind.Absolute, out var scope) || scope.Scheme != Uri.UriSchemeHttps)
-                    errors.Add("Upstream.Microsoft365.Scope must be an https URL.");
+                break;
+
+            case UpstreamAuthMode.AzureCommunicationServices:
+                ValidateEntraApplication(up.AzureCommunication, "Upstream.AzureCommunication", errors);
+                var smtpUser = up.AzureCommunication.SmtpUsername;
+                if (string.IsNullOrWhiteSpace(smtpUser) || smtpUser.Any(char.IsControl))
+                    errors.Add("Upstream.AzureCommunication.SmtpUsername is required (the SMTP Username created on the Communication Services resource).");
                 break;
         }
 
@@ -123,6 +122,22 @@ public static partial class RelayOptionsValidator
             errors.Add("Logging.FileSizeLimitBytes must be at least 1048576 (1 MB).");
         if (o.Delivery.FailedSpoolRetentionDays < 0)
             errors.Add("Delivery.FailedSpoolRetentionDays cannot be negative.");
+
+        // SNMP agent
+        if (o.Snmp.Enabled)
+        {
+            if (o.Snmp.Port is < 1 or > 65535)
+                errors.Add($"Snmp.Port is not valid: {o.Snmp.Port}.");
+            if (!IPAddress.TryParse(o.Snmp.IpAddress, out _))
+                errors.Add($"Snmp.IpAddress is not a valid IP address: '{o.Snmp.IpAddress}'.");
+            if (!IsValidName(o.Snmp.CommunitySecret))
+                errors.Add("Snmp.CommunitySecret is required (name of the stored secret that holds the community).");
+        }
+        foreach (var entry in o.Snmp.AllowedManagers)
+        {
+            if (!IpAllowList.TryParse(entry, out _))
+                errors.Add($"Snmp.AllowedManagers: '{entry}' is not an IP address or a CIDR network.");
+        }
 
         return errors;
     }
@@ -145,7 +160,28 @@ public static partial class RelayOptionsValidator
             warnings.Add("Upstream credentials may travel in clear text (AllowInsecureAuthentication is on).");
         if (o.Tls.Mode == InboundTlsMode.None)
             warnings.Add("Inbound TLS is off: clients talk to the relay in clear text.");
+        if (o.Snmp.Enabled && o.Snmp.AllowedManagers.Count == 0)
+            warnings.Add("The SNMP agent is on but no monitoring system is allowed to query it (Snmp.AllowedManagers is empty).");
         return warnings;
+    }
+
+    private static void ValidateEntraApplication(EntraApplicationOptions app, string section, List<string> errors)
+    {
+        if (!TenantRegex().IsMatch(app.TenantId ?? ""))
+            errors.Add($"{section}.TenantId is required (tenant GUID or domain, for example contoso.onmicrosoft.com).");
+        if (!Guid.TryParse(app.ClientId, out _))
+            errors.Add($"{section}.ClientId is required (application ID, a GUID).");
+        if (app.Credential == EntraCredentialType.Certificate)
+        {
+            if (!CertificateFinder.IsThumbprint(app.CertificateThumbprint))
+                errors.Add($"{section}.CertificateThumbprint is required when Credential is Certificate (40 hexadecimal digits, certificate in the LocalMachine\\My store).");
+        }
+        else if (!IsValidName(app.ClientSecretName))
+        {
+            errors.Add($"{section}.ClientSecretName is required (name of the stored secret).");
+        }
+        if (!Uri.TryCreate(app.Scope, UriKind.Absolute, out var scope) || scope.Scheme != Uri.UriSchemeHttps)
+            errors.Add($"{section}.Scope must be an https URL.");
     }
 
     private static bool IsMailbox(string? value)

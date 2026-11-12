@@ -18,20 +18,20 @@ public interface IUpstreamSender
 }
 
 /// <summary>
-/// Forwards messages to the smart host or to Microsoft 365 with MailKit, authenticating with Basic or
-/// OAuth2 (Microsoft 365), and retries transient errors with a linear back-off.
+/// Forwards messages to the smart host with MailKit, authenticating with Basic or OAuth2 (Microsoft 365,
+/// Azure Communication Services), and retries transient errors with a linear back-off.
 /// </summary>
 public sealed class UpstreamSender : IUpstreamSender
 {
     private readonly UpstreamOptions _options;
     private readonly SecretStore _secrets;
-    private readonly IM365TokenProvider _tokenProvider;
+    private readonly IAccessTokenProvider _tokenProvider;
     private readonly ILogger<UpstreamSender> _logger;
 
     public UpstreamSender(
         UpstreamOptions options,
         SecretStore secrets,
-        IM365TokenProvider tokenProvider,
+        IAccessTokenProvider tokenProvider,
         ILogger<UpstreamSender> logger)
     {
         _options = options;
@@ -135,7 +135,7 @@ public sealed class UpstreamSender : IUpstreamSender
             default:
                 RequireEncryptedChannel(client);
                 var token = await _tokenProvider.GetAccessTokenAsync(cancellationToken).ConfigureAwait(false);
-                var oauth2 = new SaslMechanismOAuth2(_options.Microsoft365.SenderUsername, token);
+                var oauth2 = new SaslMechanismOAuth2(_options.TokenUserName ?? "", token);
                 await client.AuthenticateAsync(oauth2, cancellationToken).ConfigureAwait(false);
                 return;
         }
@@ -165,6 +165,8 @@ public sealed class UpstreamSender : IUpstreamSender
         {
             UpstreamAuthMode.Basic => _options.Basic.Username,
             UpstreamAuthMode.Microsoft365 => _options.Microsoft365.SenderUsername,
+            // An ACS SMTP user name is an address only when the administrator chose the e-mail format.
+            UpstreamAuthMode.AzureCommunicationServices => _options.AzureCommunication.SmtpUsername,
             _ => ""
         };
 

@@ -106,11 +106,13 @@
   <Target Name="Portable" DependsOnTargets="Stage">
     <ZipDirectory SourceDirectory="$(StageDir)" DestinationFile="$(ReleaseDir)\SmtpRelay-$(Version)-win-x64.zip" Overwrite="true" />
     <Copy SourceFiles="$(RepoRoot)certs\NEXQ-CodeSigning.cer" DestinationFolder="$(ReleaseDir)" />
+    <!-- The MIB module of the SNMP agent, for the monitoring system (it is also installed in the "mib" folder). -->
+    <Copy SourceFiles="$(RepoRoot)mib\NEXQ-SMTP-RELAY-MIB.txt" DestinationFolder="$(ReleaseDir)" />
   </Target>
 
   <Target Name="Checksums" DependsOnTargets="Setup;Portable">
     <ItemGroup>
-      <_ReleaseFile Include="$(ReleaseDir)\*.exe;$(ReleaseDir)\*.zip;$(ReleaseDir)\*.cer" />
+      <_ReleaseFile Include="$(ReleaseDir)\*.exe;$(ReleaseDir)\*.zip;$(ReleaseDir)\*.cer;$(ReleaseDir)\NEXQ-SMTP-RELAY-MIB.txt" />
     </ItemGroup>
     <GetFileHash Files="@(_ReleaseFile)" Algorithm="SHA256" HashEncoding="hex">
       <Output TaskParameter="Items" ItemName="_Hashed" />

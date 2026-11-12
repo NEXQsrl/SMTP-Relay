@@ -5,8 +5,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project Overview
 
 NEXQ SMTP Relay: a Windows SMTP relay in C# / .NET 10, meant to replace the IIS 6 SMTP relay. It accepts mail from
-IP-allowlisted internal senders and forwards it to a smart host: Microsoft 365 via OAuth2 client credentials
-(XOAUTH2), any SMTP server via Basic auth, or an anonymous connector. Windows-only (`net10.0-windows`, DPAPI,
+IP-allowlisted internal senders and forwards it to a smart host: Microsoft 365 or Azure Communication Services via
+OAuth2 client credentials (XOAUTH2, client secret or certificate), any SMTP server via Basic auth, or an anonymous
+connector. Windows-only (`net10.0-windows`, DPAPI,
 Windows service APIs, WPF). Source-available under PolyForm Shield 1.0.0; the repository is `NEXQsrl/SMTP-Relay`.
 
 **Language convention.** Everything the administrator reads is in **English**: console UI, CLI output, log
@@ -45,8 +46,9 @@ Three projects share one installation folder (the release publishes them self-co
 
 - **`src/SmtpRelay.Core`** (library, root namespace `SmtpRelay`): `Configuration/` (`RelayOptions` and friends,
   `ConfigLoader` load + atomic save, `RelayOptionsValidator` errors and warnings), `Security/` (`SecretStore`,
-  `SecretProtector`, `MachineKey`, `WindowsAcl`, `IpAllowList`, `LogSanitizer`), `Relay/` (`UpstreamSender`,
-  `Microsoft365TokenProvider`). Anything both executables need goes here.
+  `SecretProtector`, `MachineKey`, `WindowsAcl`, `IpAllowList`, `LogSanitizer`, `CertificateFinder`), `Relay/`
+  (`UpstreamSender`, `EntraTokenProvider`), `Monitoring/` (`DeliveryCounters`, `AuditTrail`, `SnmpResponder`,
+  `RelayMib`). Anything both executables need goes here.
 - **`src/SmtpRelay.Service`** (`SmtpRelay.exe`): dual-mode entry point. If `args[0]` is a CLI verb
   (`Cli/CommandLineHandler.cs`) it runs the command and exits; otherwise it validates the config fail-fast and runs
   `Smtp/SmtpRelayHostedService` under the generic host with `AddWindowsService`.
@@ -66,6 +68,17 @@ Inbound message flow, wired in `SmtpRelayHostedService` on the `SmtpServer` libr
    transient so a defect never loses mail silently.
 4. `Relay/UpstreamSender.cs` delivers via MailKit with linear back-off. Transient vs permanent is signalled with
    `UpstreamDeliveryException`. Credentials are sent only when `client.IsSecure` (or `AllowInsecureAuthentication`).
+
+Upstream authentication: `UpstreamOptions.Mode` selects Basic, Anonymous, Microsoft365 or
+AzureCommunicationServices. The two Microsoft modes share `EntraApplicationOptions` (tenant, client, `Credential` =
+ClientSecret or Certificate from `LocalMachine\My`) and `EntraTokenProvider`; they differ only in the scope, the
+default host and the XOAUTH2 user name (`UpstreamOptions.TokenUserName`: the mailbox UPN, or the ACS SMTP Username).
+
+Monitoring: `RelayMessageStore` updates `DeliveryCounters` (today's delivered / failed, seeded from the audit trail
+at start) next to every audit line. `Snmp/SnmpAgentService` (only when `Snmp.Enabled`) serves them over UDP with
+the hand-written, read-only v1/v2c `SnmpResponder`; it has its own port (1161) because the Windows SNMP service
+owns 161, and a failure there must never stop the relay. OIDs come from `RelayMib` and
+`AppInfo.SnmpEnterpriseNumber` (a placeholder until IANA assigns one) and must match `mib/NEXQ-SMTP-RELAY-MIB.txt`.
 
 Configuration: `appsettings.json` next to the executables -> `appsettings.{env}.json` -> env vars prefixed
 `SMTPRELAY_` (`__` separator), bound to the `SmtpRelay` section. Read once at startup: changes need a service
@@ -96,8 +109,14 @@ the console.
   to en-US in `App.OnStartup` instead.
 - `SmtpRelay.exe status` exit codes are part of the installer contract: 0 = running, 3 = not running, 4 = not
   installed (`installer/SmtpRelay.iss` uses 0 to decide whether to restart the service after an upgrade).
+- A service process that exits before the generic host has answered the service control manager is shown by
+  Windows as "error 1053", with no reason. Every early exit in `Program.cs` therefore goes through
+  `ServiceStartupFailure.ReportAsync` when running as a service (it logs, runs a minimal host, then stops).
+- Folder names never contain the company name: the program is in `{autopf}\SMTP Relay`, the data in
+  `C:\ProgramData\SmtpRelay`. `installer/SmtpRelay.iss` moves a 2.0.0 installation out of `{autopf}\NEXQ\SMTP Relay`.
 - `appsettings.json` is installed with `onlyifdoesntexist uninsneveruninstall`: new settings must have sensible
   defaults in the options classes, because existing installations keep their old file.
 - The tests (`tests/SmtpRelay.Tests`) run the real listener against a fake smart host on loopback; SMTP-path
-  changes should be covered there. `TheReleaseSetupPassesTheUpdateVerification` only acts when
+  changes should be covered there. `SnmpTests` queries the real agent with SharpSnmpLib (a test-only dependency:
+  the product has no SNMP library). `TheReleaseSetupPassesTheUpdateVerification` only acts when
   `SMTPRELAY_SIGNED_SETUP` points to a built setup.

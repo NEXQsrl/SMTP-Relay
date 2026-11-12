@@ -8,6 +8,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using MimeKit;
 using SmtpRelay.Configuration;
 using SmtpRelay.Manager.Services;
+using SmtpRelay.Monitoring;
 using SmtpRelay.Relay;
 using SmtpRelay.Security;
 
@@ -37,12 +38,13 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     public RelayOptions Options { get; private set; }
     public string ConfigPath => IsDemo
-        ? @"C:\Program Files\NEXQ\SMTP Relay\appsettings.json"
+        ? @"C:\Program Files\SMTP Relay\appsettings.json"
         : Path.Combine(_configDirectory, ConfigLoader.FileName);
     /// <summary>Sample data for the documentation pictures: nothing of this computer is read or written.</summary>
     public bool IsDemo { get; }
 
     public ObservableCollection<string> AllowedIps { get; } = new();
+    public ObservableCollection<string> SnmpManagers { get; } = new();
     public ObservableCollection<string> Errors { get; } = new();
     public ObservableCollection<string> Warnings { get; } = new();
     public ObservableCollection<CertificateChoice> Certificates { get; } = new();
@@ -62,6 +64,10 @@ public sealed class MainViewModel : INotifyPropertyChanged
         foreach (var entry in Options.Security.AllowedIps)
             AllowedIps.Add(entry);
 
+        SnmpManagers.Clear();
+        foreach (var entry in Options.Snmp.AllowedManagers)
+            SnmpManagers.Add(entry);
+
         _secrets = null;
         SecretStoreError = null;
         if (!IsDemo)
@@ -79,6 +85,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private string Snapshot()
     {
         Options.Security.AllowedIps = AllowedIps.ToList();
+        Options.Snmp.AllowedManagers = SnmpManagers.ToList();
         return JsonSerializer.Serialize(Options);
     }
 
@@ -88,13 +95,16 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public void Revalidate()
     {
         Options.Security.AllowedIps = AllowedIps.ToList();
+        Options.Snmp.AllowedManagers = SnmpManagers.ToList();
         Replace(Errors, RelayOptionsValidator.Validate(Options));
 
         var warnings = RelayOptionsValidator.Warnings(Options).ToList();
         if (_secrets is not null && !IsDemo)
         {
-            if (Options.Upstream.Mode == UpstreamAuthMode.Microsoft365 && !_secrets.Contains(Options.Upstream.Microsoft365.ClientSecretName))
-                warnings.Insert(0, "The Microsoft 365 client secret is not stored yet (Smart host page).");
+            if (Options.Upstream.EntraApplication is { Credential: EntraCredentialType.ClientSecret } app && !_secrets.Contains(app.ClientSecretName))
+                warnings.Insert(0, "The client secret of the app registration is not stored yet (Smart host page).");
+            if (Options.Snmp.Enabled && !_secrets.Contains(Options.Snmp.CommunitySecret))
+                warnings.Insert(0, "The SNMP community is not stored yet: the agent answers nobody (SNMP page).");
             if (Options.Upstream.Mode == UpstreamAuthMode.Basic && !_secrets.Contains(Options.Upstream.Basic.PasswordSecret))
                 warnings.Insert(0, "The smart host password is not stored yet (Smart host page).");
         }
@@ -102,6 +112,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
         {
             warnings.Insert(0, "The secret store cannot be opened: " + SecretStoreError);
         }
+        if (!IsDemo && UsesCertificate && EntraCertificateProblem is { } certificateProblem)
+            warnings.Insert(0, certificateProblem + " (Smart host page)");
         Replace(Warnings, warnings);
 
         OnPropertyChanged(nameof(IsDirty));
@@ -118,6 +130,10 @@ public sealed class MainViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(ClientSecretStatus));
         OnPropertyChanged(nameof(PasswordStatus));
         OnPropertyChanged(nameof(PfxPasswordStatus));
+        OnPropertyChanged(nameof(SnmpCommunityStatus));
+        OnPropertyChanged(nameof(EntraCertificateStatus));
+        OnPropertyChanged(nameof(SnmpSummary));
+        OnPropertyChanged(nameof(SnmpExample));
     }
 
     private static void Replace(ObservableCollection<string> target, IEnumerable<string> items)
@@ -153,6 +169,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public string UpstreamSummary => Options.Upstream.Mode switch
     {
         UpstreamAuthMode.Microsoft365 => $"Microsoft 365 (OAuth2) · {Options.Upstream.Host}:{Options.Upstream.Port}",
+        UpstreamAuthMode.AzureCommunicationServices => $"Azure Communication Services (OAuth2) · {Options.Upstream.Host}:{Options.Upstream.Port}",
         UpstreamAuthMode.Basic => $"User name and password · {Options.Upstream.Host}:{Options.Upstream.Port}",
         _ => $"No authentication · {Options.Upstream.Host}:{Options.Upstream.Port}"
     };
@@ -199,16 +216,22 @@ public sealed class MainViewModel : INotifyPropertyChanged
         set { if (value) SetMode(UpstreamAuthMode.Anonymous); }
     }
 
+    public bool IsAzureCommunication
+    {
+        get => Options.Upstream.Mode == UpstreamAuthMode.AzureCommunicationServices;
+        set { if (value) SetMode(UpstreamAuthMode.AzureCommunicationServices); }
+    }
+
     private void SetMode(UpstreamAuthMode mode)
     {
         if (Options.Upstream.Mode == mode)
             return;
 
         Options.Upstream.Mode = mode;
-        // Sensible defaults when switching to Microsoft 365; other modes keep what the administrator typed.
-        if (mode == UpstreamAuthMode.Microsoft365)
+        // The two Microsoft services have one fixed endpoint; other modes keep what the administrator typed.
+        if (mode is UpstreamAuthMode.Microsoft365 or UpstreamAuthMode.AzureCommunicationServices)
         {
-            Options.Upstream.Host = "smtp.office365.com";
+            Options.Upstream.Host = mode == UpstreamAuthMode.Microsoft365 ? "smtp.office365.com" : AzureCommunicationOptions.DefaultHost;
             Options.Upstream.Port = 587;
             Options.Upstream.Security = UpstreamSecureMode.StartTls;
             OnPropertyChanged(nameof(Options));
@@ -216,6 +239,202 @@ public sealed class MainViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(IsMicrosoft365));
         OnPropertyChanged(nameof(IsBasic));
         OnPropertyChanged(nameof(IsAnonymous));
+        OnPropertyChanged(nameof(IsAzureCommunication));
+        NotifyEntraApplication();
+        Revalidate();
+    }
+
+    // ----- Microsoft Entra application (Microsoft 365 and Azure Communication Services) ------------------
+
+    /// <summary>The app registration of the current mode (the Microsoft 365 one when the mode has none, so that bindings always resolve).</summary>
+    public EntraApplicationOptions EntraApp => Options.Upstream.EntraApplication ?? Options.Upstream.Microsoft365;
+
+    public bool UsesEntraApp => Options.Upstream.EntraApplication is not null;
+
+    public string EntraCardTitle => IsAzureCommunication ? "Azure Communication Services" : "Microsoft 365 app registration";
+
+    public string EntraCardIntro => IsAzureCommunication
+        ? "Register an application in Microsoft Entra ID, give it the role \"Communication and Email Service Owner\" on the Communication Services resource, then create an SMTP Username for it on the resource (SMTP Usernames). The README explains each step."
+        : "Register an application in Microsoft Entra ID with the application permission SMTP.SendAsApp, then register its service principal in Exchange Online and give it access to the sending mailbox. The README explains each step.";
+
+    public string EntraIdentityLabel => IsAzureCommunication ? "SMTP Username" : "Sending mailbox (UPN)";
+
+    public string EntraIdentityHint => IsAzureCommunication
+        ? "The SMTP Username created on the resource, exactly as shown in the Azure portal. Senders must use a MailFrom address of a domain connected to the resource."
+        : "For example relay@contoso.com.";
+
+    public string EntraIdentity
+    {
+        get => IsAzureCommunication ? Options.Upstream.AzureCommunication.SmtpUsername : Options.Upstream.Microsoft365.SenderUsername;
+        set
+        {
+            if (IsAzureCommunication)
+                Options.Upstream.AzureCommunication.SmtpUsername = value ?? "";
+            else
+                Options.Upstream.Microsoft365.SenderUsername = value ?? "";
+        }
+    }
+
+    public bool UsesClientSecret
+    {
+        get => EntraApp.Credential == EntraCredentialType.ClientSecret;
+        set { if (value) SetCredential(EntraCredentialType.ClientSecret); }
+    }
+
+    public bool UsesCertificate
+    {
+        get => UsesEntraApp && EntraApp.Credential == EntraCredentialType.Certificate;
+        set { if (value) SetCredential(EntraCredentialType.Certificate); }
+    }
+
+    private void SetCredential(EntraCredentialType type)
+    {
+        if (EntraApp.Credential == type)
+            return;
+        EntraApp.Credential = type;
+        NotifyEntraApplication();
+        Revalidate();
+    }
+
+    public string EntraCertificateThumbprint
+    {
+        get => EntraApp.CertificateThumbprint;
+        set
+        {
+            EntraApp.CertificateThumbprint = value ?? "";
+            OnPropertyChanged();
+        }
+    }
+
+    private string? _checkedThumbprint;
+    private string? _checkedProblem;
+
+    /// <summary>What is wrong with the chosen certificate, or null. The store is read again only when the thumbprint changes.</summary>
+    private string? EntraCertificateProblem
+    {
+        get
+        {
+            var thumbprint = CertificateFinder.Normalize(EntraApp.CertificateThumbprint);
+            if (thumbprint == _checkedThumbprint)
+                return _checkedProblem;
+
+            _checkedThumbprint = thumbprint;
+            if (thumbprint.Length != 40)
+                return _checkedProblem = null; // the validation already asks for it
+            try
+            {
+                using var certificate = CertificateFinder.FindInLocalMachine(thumbprint);
+                _checkedProblem = certificate is null
+                    ? "The certificate of the app registration is not in the computer store (Local Machine > Personal)."
+                    : CertificateFinder.DescribeProblem(certificate);
+            }
+            catch (Exception ex)
+            {
+                _checkedProblem = "The computer certificate store cannot be read: " + ex.Message;
+            }
+            return _checkedProblem;
+        }
+    }
+
+    public string EntraCertificateStatus
+    {
+        get
+        {
+            if (IsDemo)
+                return "Found in the computer store";
+            if (!CertificateFinder.IsThumbprint(EntraApp.CertificateThumbprint))
+                return "Not chosen";
+            return EntraCertificateProblem is null ? "Found in the computer store" : "Not usable";
+        }
+    }
+
+    /// <summary>Creates a self-signed certificate for the app registration, selects it and returns it (the caller disposes it).</summary>
+    public X509Certificate2 CreateEntraCertificate()
+    {
+        var name = $"{AppInfo.ProductName} ({Environment.MachineName})";
+        var certificate = CertificateFinder.CreateForEntraApplication(name, validYears: 2);
+        ManagerLog.Write($"Certificate '{certificate.Subject}' created in LocalMachine\\My (thumbprint {certificate.Thumbprint}).");
+        LoadCertificates();
+        _checkedThumbprint = null;
+        EntraApp.CertificateThumbprint = certificate.Thumbprint;
+        NotifyEntraApplication();
+        Revalidate();
+        return certificate;
+    }
+
+    /// <summary>Writes the public part (.cer) of the chosen certificate: the file to upload to the app registration.</summary>
+    public void ExportEntraCertificate(string path)
+    {
+        using var certificate = CertificateFinder.FindInLocalMachine(EntraApp.CertificateThumbprint)
+            ?? throw new InvalidOperationException("The certificate is not in the computer store (Local Machine > Personal).");
+        File.WriteAllBytes(path, certificate.Export(X509ContentType.Cert));
+        ManagerLog.Write($"Public certificate {certificate.Thumbprint} exported to {path}.");
+    }
+
+    private void NotifyEntraApplication()
+    {
+        OnPropertyChanged(nameof(EntraApp));
+        OnPropertyChanged(nameof(UsesEntraApp));
+        OnPropertyChanged(nameof(EntraCardTitle));
+        OnPropertyChanged(nameof(EntraCardIntro));
+        OnPropertyChanged(nameof(EntraIdentityLabel));
+        OnPropertyChanged(nameof(EntraIdentityHint));
+        OnPropertyChanged(nameof(EntraIdentity));
+        OnPropertyChanged(nameof(UsesClientSecret));
+        OnPropertyChanged(nameof(UsesCertificate));
+        OnPropertyChanged(nameof(EntraCertificateThumbprint));
+        OnPropertyChanged(nameof(EntraCertificateStatus));
+        OnPropertyChanged(nameof(ClientSecretStatus));
+    }
+
+    // ----- SNMP ------------------------------------------------------------------------------------------
+
+    public bool SnmpEnabled
+    {
+        get => Options.Snmp.Enabled;
+        set
+        {
+            Options.Snmp.Enabled = value;
+            OnPropertyChanged();
+            Revalidate();
+        }
+    }
+
+    public string SnmpCommunityStatus => SecretStatus(Options.Snmp.CommunitySecret);
+    public string SnmpDeliveredOid => RelayMib.ToText(RelayMib.DeliveredToday);
+    public string SnmpFailedOid => RelayMib.ToText(RelayMib.FailedToday);
+    public string SnmpSummary => Options.Snmp.Enabled ? $"On · UDP port {Options.Snmp.Port}" : "Off";
+    public string SnmpExample => $"snmpget -v2c -c <community> {Environment.MachineName}:{Options.Snmp.Port} {SnmpDeliveredOid} {SnmpFailedOid}";
+
+    /// <summary>The MIB module installed next to the console, or null when it is missing (development build).</summary>
+    public static string? MibFilePath
+    {
+        get
+        {
+            var path = Path.Combine(AppContext.BaseDirectory, "mib", RelayMib.MibFileName);
+            return File.Exists(path) ? path : null;
+        }
+    }
+
+    /// <summary>Adds a monitoring system. Returns an error message, or null when it was added.</summary>
+    public string? AddSnmpManager(string? entry)
+    {
+        entry = entry?.Trim() ?? "";
+        if (entry.Length == 0)
+            return "Type the IP address of the monitoring system, or a network such as 192.168.10.0/24.";
+        if (!IpAllowList.TryParse(entry, out _))
+            return $"'{entry}' is not an IP address or a CIDR network.";
+        if (SnmpManagers.Contains(entry, StringComparer.OrdinalIgnoreCase))
+            return $"'{entry}' is already in the list.";
+
+        SnmpManagers.Add(entry);
+        Revalidate();
+        return null;
+    }
+
+    public void RemoveSnmpManager(string entry)
+    {
+        SnmpManagers.Remove(entry);
         Revalidate();
     }
 
@@ -279,7 +498,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     public string? SecretStoreError { get; private set; }
 
-    public string ClientSecretStatus => SecretStatus(Options.Upstream.Microsoft365.ClientSecretName);
+    public string ClientSecretStatus => SecretStatus(EntraApp.ClientSecretName);
     public string PasswordStatus => SecretStatus(Options.Upstream.Basic.PasswordSecret);
     public string PfxPasswordStatus => SecretStatus(Options.Tls.CertificatePasswordSecret);
 
@@ -437,7 +656,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     {
         if (IsDemo)
             return;
-        var (delivered, failed, failures) = LogReader.ReadTodayStats(Options.LogDirectory);
+        var (delivered, failed, failures) = AuditTrail.ReadToday(Options.LogDirectory);
         SetStats(delivered, failed, failures);
     }
 
@@ -458,11 +677,11 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private UpstreamSender CreateSender()
     {
         var secrets = _secrets ?? throw new InvalidOperationException(SecretStoreError ?? "The secret store is not available.");
-        var tokens = new Microsoft365TokenProvider(Options.Upstream.Microsoft365, secrets, NullLogger<Microsoft365TokenProvider>.Instance);
         // One attempt only: a test must answer quickly instead of retrying in the background.
         var upstream = JsonSerializer.Deserialize<UpstreamOptions>(JsonSerializer.Serialize(Options.Upstream))!;
         upstream.MaxAttempts = 1;
         upstream.TimeoutSeconds = Math.Min(upstream.TimeoutSeconds, 30);
+        var tokens = new EntraTokenProvider(upstream, secrets, NullLogger<EntraTokenProvider>.Instance);
         return new UpstreamSender(upstream, secrets, tokens, NullLogger<UpstreamSender>.Instance);
     }
 
@@ -498,6 +717,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         _ when !string.IsNullOrWhiteSpace(Options.Upstream.OverrideFromAddress) => Options.Upstream.OverrideFromAddress!,
         UpstreamAuthMode.Microsoft365 => Options.Upstream.Microsoft365.SenderUsername,
         UpstreamAuthMode.Basic when Options.Upstream.Basic.Username.Contains('@') => Options.Upstream.Basic.Username,
+        UpstreamAuthMode.AzureCommunicationServices when Options.Upstream.AzureCommunication.SmtpUsername.Contains('@') => Options.Upstream.AzureCommunication.SmtpUsername,
         _ => ""
     };
 
@@ -706,6 +926,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         "Tls" => "Inbound TLS",
         "Logging" => "Logging & retention",
         "Logs" => "Logs",
+        "Snmp" => "SNMP monitoring",
         "About" => "About & updates",
         _ => "Overview"
     };
@@ -718,6 +939,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         "Tls" => "Encryption between your devices and the relay (STARTTLS).",
         "Logging" => "What is recorded, where, and for how long.",
         "Logs" => "Application log, delivery audit trail and console activity.",
+        "Snmp" => "Lets your monitoring system read how many messages were delivered and failed today.",
         "About" => "Version, updates and license.",
         _ => "State of the relay on this computer."
     };

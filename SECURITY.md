@@ -107,6 +107,17 @@ SMTP Relay **has not had an independent security review**. Do not expose the lis
 - **No telemetry.** The service contacts the smart host and, in Microsoft 365 mode, `login.microsoftonline.com`.
   The console contacts `api.github.com` and `github.com` for updates, and you can turn the automatic check off.
 
+### Monitoring (SNMP)
+
+- The built-in SNMP agent is **off by default**. It is read-only: it exposes the number of messages delivered and
+  failed today and four objects of the standard system group, and nothing can be written through it.
+- It answers only addresses in `Snmp.AllowedManagers` (an empty list answers nobody) that present the community,
+  which is kept in the encrypted secret store and compared in constant time. Any other request is dropped without
+  an answer, so the agent does not reveal itself to a scan.
+- SNMP v1 and v2c have no encryption: the community and the values travel in clear text, and the source address
+  of a UDP request can be forged. Keep the agent on a management network. SNMPv3 is not implemented.
+- Malformed requests are discarded; the size of a request and the number of variables are bounded.
+
 ### Known limits
 
 - The service runs as **LocalSystem** by default, so that it can listen on port 25 and read the machine certificate

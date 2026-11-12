@@ -17,6 +17,11 @@
 #define ServiceExe "SmtpRelay.exe"
 #define ConsoleExe "SmtpRelayManager.exe"
 #define FirewallRule "NEXQ SMTP Relay"
+; Folder names carry the product name only, never the company name.
+#define FolderName "SMTP Relay"
+; Version 2.0.0 installed here. An upgrade moves the program to the new folder (see [Code]).
+#define LegacyDir "{autopf}\NEXQ\SMTP Relay"
+#define LegacyGroup "{commonprograms}\NEXQ SMTP Relay"
 
 [Setup]
 AppId={{8C5B6E0A-3F7D-4C1E-9A52-6D1F0B7E4A21}
@@ -32,8 +37,9 @@ VersionInfoVersion={#AppVersion}
 VersionInfoCompany={#AppPublisher}
 VersionInfoDescription={#AppName} Setup
 VersionInfoProductName={#AppName}
-DefaultDirName={autopf}\NEXQ\SMTP Relay
-DefaultGroupName={#AppName}
+DefaultDirName={autopf}\{#FolderName}
+DefaultGroupName={#FolderName}
+UsePreviousGroup=no
 DisableProgramGroupPage=yes
 DisableWelcomePage=no
 LicenseFile=..\LICENSE
@@ -94,6 +100,10 @@ Name: "desktopicon"; Description: "{cm:TaskDesktop}"; Flags: unchecked
 Source: "{#PublishDir}\appsettings.json"; DestDir: "{app}"; Flags: onlyifdoesntexist uninsneveruninstall
 Source: "{#PublishDir}\*"; DestDir: "{app}"; Excludes: "appsettings.json,*.pdb"; Flags: ignoreversion recursesubdirs createallsubdirs
 
+[InstallDelete]
+; Start menu folder of version 2.0.0.
+Type: filesandordirs; Name: "{#LegacyGroup}"
+
 [Icons]
 Name: "{group}\{cm:ConsoleName}"; Filename: "{app}\{#ConsoleExe}"
 Name: "{group}\{cm:UninstallProgram,{#AppName}}"; Filename: "{uninstallexe}"
@@ -103,6 +113,8 @@ Name: "{autodesktop}\{cm:ConsoleName}"; Filename: "{app}\{#ConsoleExe}"; Tasks: 
 ; The service itself is registered in [Code] (RegisterService), so that a failure can be reported.
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""{#FirewallRule}"""; Flags: runhidden; Tasks: firewall
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""{#FirewallRule}"" dir=in action=allow program=""{app}\{#ServiceExe}"" protocol=TCP profile=domain,private enable=yes"; StatusMsg: "{cm:StatusFirewall}"; Flags: runhidden; Tasks: firewall
+; Same name, second rule: the built-in SNMP agent (off by default) answers over UDP.
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""{#FirewallRule}"" dir=in action=allow program=""{app}\{#ServiceExe}"" protocol=UDP profile=domain,private enable=yes"; Flags: runhidden; Tasks: firewall
 ; An update starts the service again only if it was running before.
 Filename: "{app}\{#ServiceExe}"; Parameters: "start"; StatusMsg: "{cm:StatusStart}"; Flags: runhidden; Check: WasServiceRunning
 Filename: "{app}\{#ConsoleExe}"; Description: "{cm:RunConsole}"; Flags: postinstall nowait skipifsilent runascurrentuser
@@ -116,6 +128,32 @@ Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=
 [Code]
 var
   ServiceWasRunning: Boolean;
+  { Folder of a version 2.0.0 installation that this setup moves away from, or empty. }
+  LegacyAppDir: String;
+
+{ Version 2.0.0 was installed in "Program Files\NEXQ\SMTP Relay". The setup would reuse that folder for an
+  upgrade: propose the new one instead and remember the old one, so that its settings can be carried over. }
+procedure InitializeWizard;
+var
+  Legacy: String;
+begin
+  LegacyAppDir := '';
+  Legacy := ExpandConstant('{#LegacyDir}');
+  if CompareText(RemoveBackslashUnlessRoot(WizardDirValue), Legacy) = 0 then
+  begin
+    LegacyAppDir := Legacy;
+    WizardForm.DirEdit.Text := ExpandConstant('{autopf}\{#FolderName}');
+  end;
+end;
+
+{ The executable that controls the service before the files are replaced: the one of the folder being
+  upgraded, which is the old folder when the program is being moved. }
+function InstalledServiceExe: String;
+begin
+  Result := ExpandConstant('{app}\{#ServiceExe}');
+  if (not FileExists(Result)) and (LegacyAppDir <> '') then
+    Result := LegacyAppDir + '\{#ServiceExe}';
+end;
 
 function WasServiceRunning: Boolean;
 begin
@@ -136,7 +174,7 @@ var
 begin
   Result := '';
   ServiceWasRunning := False;
-  ExePath := ExpandConstant('{app}\{#ServiceExe}');
+  ExePath := InstalledServiceExe;
   if FileExists(ExePath) then
   begin
     if Exec(ExePath, 'status', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
@@ -169,10 +207,63 @@ begin
   end;
 end;
 
+{ Moving from the folder of version 2.0.0: the settings come along before the new files are copied
+  (the setup never replaces an existing appsettings.json). }
+procedure CarryOverLegacySettings;
+var
+  OldSettings, NewSettings: String;
+begin
+  if (LegacyAppDir = '') or (CompareText(LegacyAppDir, RemoveBackslashUnlessRoot(ExpandConstant('{app}'))) = 0) then
+    Exit;
+  OldSettings := LegacyAppDir + '\appsettings.json';
+  NewSettings := ExpandConstant('{app}\appsettings.json');
+  if FileExists(OldSettings) and (not FileExists(NewSettings)) then
+  begin
+    ForceDirectories(ExpandConstant('{app}'));
+    if FileCopy(OldSettings, NewSettings, True) then
+      Log('Settings carried over from ' + LegacyAppDir)
+    else
+      Log('Could not copy the settings from ' + LegacyAppDir);
+  end;
+end;
+
+{ After the service points to the new folder, the old one is removed. It is deleted only when the settings
+  are safely in the new folder; the parent "NEXQ" folder is removed only if nothing else is in it. }
+procedure RemoveLegacyFolder;
+var
+  Attempt: Integer;
+begin
+  if (LegacyAppDir = '') or (CompareText(LegacyAppDir, RemoveBackslashUnlessRoot(ExpandConstant('{app}'))) = 0) then
+    Exit;
+  if not DirExists(LegacyAppDir) then
+    Exit;
+  if not FileExists(ExpandConstant('{app}\appsettings.json')) then
+  begin
+    Log('The old folder is kept: the settings are not in the new folder.');
+    Exit;
+  end;
+  { The console that started the update may need a moment to close. }
+  for Attempt := 1 to 10 do
+  begin
+    if DelTree(LegacyAppDir, True, True, True) then
+      Break;
+    Sleep(500);
+  end;
+  if DirExists(LegacyAppDir) then
+    Log('Could not remove ' + LegacyAppDir + ': delete it by hand.')
+  else
+    RemoveDir(ExtractFileDir(LegacyAppDir));
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
+  if CurStep = ssInstall then
+    CarryOverLegacySettings;
   if CurStep = ssPostInstall then
+  begin
     RegisterService;
+    RemoveLegacyFolder;
+  end;
 end;
 
 { Removing the program keeps the data by default; the administrator may choose to delete it. }

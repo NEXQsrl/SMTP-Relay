@@ -20,6 +20,7 @@ public sealed class RelayOptions
     public LoggingOptions Logging { get; set; } = new();
     public DeliveryOptions Delivery { get; set; } = new();
     public UpdateOptions Updates { get; set; } = new();
+    public SnmpOptions Snmp { get; set; } = new();
 
     [JsonIgnore] public string SecretsFilePath => Path.Combine(DataDirectory, "secrets.dat");
     [JsonIgnore] public string EntropyFilePath => Path.Combine(DataDirectory, "entropy.bin");

@@ -114,6 +114,17 @@ SMTP Relay **non ha avuto una revisione di sicurezza indipendente**. Non esporre
   `login.microsoftonline.com`. La console contatta `api.github.com` e `github.com` per gli aggiornamenti, e il
   controllo automatico si può disattivare.
 
+### Monitoraggio (SNMP)
+
+- L'agente SNMP integrato è **spento per impostazione predefinita**. È in sola lettura: espone il numero di
+  messaggi consegnati e falliti oggi e quattro oggetti del gruppo system standard, e non permette di scrivere nulla.
+- Risponde solo agli indirizzi in `Snmp.AllowedManagers` (un elenco vuoto non risponde a nessuno) che presentano
+  la community, conservata nell'archivio cifrato dei segreti e confrontata in tempo costante. Ogni altra richiesta
+  è scartata senza risposta, così l'agente non si rivela a una scansione.
+- SNMP v1 e v2c non hanno cifratura: community e valori viaggiano in chiaro, e l'indirizzo di origine di una
+  richiesta UDP può essere falsificato. Tieni l'agente su una rete di gestione. SNMPv3 non è implementato.
+- Le richieste malformate sono scartate; la dimensione di una richiesta e il numero di variabili sono limitati.
+
 ### Limiti noti
 
 - Il servizio gira come **LocalSystem** per impostazione predefinita, per poter ascoltare sulla porta 25 e leggere

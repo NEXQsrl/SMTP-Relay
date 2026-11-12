@@ -87,4 +87,5 @@ jobs:
             artifacts/release/SmtpRelay-Setup-${{ steps.version.outputs.version }}.exe
             artifacts/release/SmtpRelay-${{ steps.version.outputs.version }}-win-x64.zip
             artifacts/release/NEXQ-CodeSigning.cer
+            artifacts/release/NEXQ-SMTP-RELAY-MIB.txt
             artifacts/release/SHA256SUMS.txt

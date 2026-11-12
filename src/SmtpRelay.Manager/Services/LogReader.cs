@@ -51,41 +51,4 @@ public static class LogReader
         catch (IOException) { return Array.Empty<string>(); }
         catch (UnauthorizedAccessException) { return new[] { "Access to the log file was denied. Run the console as administrator." }; }
     }
-
-    /// <summary>Counts today's delivered and failed messages from the audit trail and returns the latest failures.</summary>
-    public static (int Delivered, int Failed, IReadOnlyList<string> RecentFailures) ReadTodayStats(string directory)
-    {
-        int delivered = 0, failed = 0;
-        var failures = new List<string>();
-        try
-        {
-            if (!Directory.Exists(directory))
-                return (0, 0, failures);
-
-            // audit-yyyyMMdd.log, plus audit-yyyyMMdd_001.log... when the file was rotated by size.
-            foreach (var file in Directory.EnumerateFiles(directory, $"audit-{DateTime.Now:yyyyMMdd}*.log").OrderBy(f => f, StringComparer.Ordinal))
-            {
-                using var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-                using var reader = new StreamReader(stream, Encoding.UTF8);
-                string? line;
-                while ((line = reader.ReadLine()) is not null)
-                {
-                    if (line.Contains(" DELIVERED ", StringComparison.Ordinal))
-                        delivered++;
-                    else if (line.Contains(" FAILED ", StringComparison.Ordinal))
-                    {
-                        failed++;
-                        failures.Add(line);
-                    }
-                }
-            }
-        }
-        catch (IOException) { }
-        catch (UnauthorizedAccessException) { }
-
-        if (failures.Count > 5)
-            failures = failures.GetRange(failures.Count - 5, 5);
-        failures.Reverse();
-        return (delivered, failed, failures);
-    }
 }

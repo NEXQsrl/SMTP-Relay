@@ -44,7 +44,8 @@ public sealed class ServiceManager
         Thread.Sleep(1500);
         controller.Refresh();
         if (controller.Status != ServiceControllerStatus.Running)
-            throw new InvalidOperationException("The service stopped right after starting. Open the Logs page to see the reason.");
+            throw new InvalidOperationException("The service stopped right after starting: it refused its settings, or could not open the port. " +
+                "The Overview page lists what is wrong with the settings; the Logs page has the exact reason.");
     }
 
     public void Stop(string serviceName)

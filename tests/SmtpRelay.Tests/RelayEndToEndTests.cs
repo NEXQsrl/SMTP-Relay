@@ -9,6 +9,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using MimeKit;
 using SmtpRelay.Configuration;
+using SmtpRelay.Monitoring;
 using SmtpRelay.Relay;
 using SmtpRelay.Security;
 using SmtpRelay.Smtp;
@@ -29,6 +30,7 @@ public sealed class RelayEndToEndTests : IAsyncLifetime
     private readonly string _dataDir = Directory.CreateTempSubdirectory("smtprelay-e2e-").FullName;
     private readonly FakeSmartHost _smartHost = new();
     private readonly CapturingLoggerFactory _logs = new();
+    private readonly DeliveryCounters _counters = new();
     private SmtpRelayHostedService? _relay;
     private int _relayPort;
 
@@ -66,13 +68,13 @@ public sealed class RelayEndToEndTests : IAsyncLifetime
         var secrets = SecretStore.Open(options);
         var sender = new UpstreamSender(
             options.Upstream, secrets,
-            new Microsoft365TokenProvider(options.Upstream.Microsoft365, secrets, NullLogger<Microsoft365TokenProvider>.Instance),
+            new EntraTokenProvider(options.Upstream, secrets, NullLogger<EntraTokenProvider>.Instance),
             NullLogger<UpstreamSender>.Instance);
 
         _relay = new SmtpRelayHostedService(
             options, sender, secrets,
             new IpAllowList(options.Security.AllowedIps, options.Security.RejectWhenAllowListEmpty),
-            _logs, NullLogger<SmtpRelayHostedService>.Instance, new FakeLifetime());
+            _logs, NullLogger<SmtpRelayHostedService>.Instance, new FakeLifetime(), _counters);
         await _relay.StartAsync(CancellationToken.None);
         await WaitForPortAsync(_relayPort);
     }
@@ -116,6 +118,7 @@ public sealed class RelayEndToEndTests : IAsyncLifetime
 
         var audit = Assert.Single(_logs.Entries, e => e.Category == LoggingSetup.AuditSourceContext);
         Assert.StartsWith("DELIVERED client=127.0.0.1 from=printer@corp.example to=alice@example.org,bob@example.org", audit.Message);
+        Assert.Equal((1, 0), _counters.Today); // one message, whatever the number of recipients
     }
 
     [Fact]
@@ -171,6 +174,7 @@ public sealed class RelayEndToEndTests : IAsyncLifetime
         var spooled = Assert.Single(Directory.GetFiles(Path.Combine(_dataDir, "failed"), "*.eml"));
         Assert.Contains("Scanned document attached.", File.ReadAllText(spooled));
         Assert.Contains(_logs.Entries, e => e.Category == LoggingSetup.AuditSourceContext && e.Message.StartsWith("FAILED") && e.Message.Contains("permanent=True"));
+        Assert.Equal((0, 1), _counters.Today);
     }
 
     [Fact]
@@ -284,7 +288,7 @@ public sealed class RelayEndToEndTests : IAsyncLifetime
         secrets.Set(options.Upstream.Basic.PasswordSecret, "secret");
         var sender = new UpstreamSender(
             options.Upstream, secrets,
-            new Microsoft365TokenProvider(options.Upstream.Microsoft365, secrets, NullLogger<Microsoft365TokenProvider>.Instance),
+            new EntraTokenProvider(options.Upstream, secrets, NullLogger<EntraTokenProvider>.Instance),
             NullLogger<UpstreamSender>.Instance);
 
         var ex = await Assert.ThrowsAsync<UpstreamDeliveryException>(() => sender.VerifyConnectionAsync(CancellationToken.None));

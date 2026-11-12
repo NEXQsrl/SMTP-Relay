@@ -187,8 +187,8 @@ public static class CommandLineHandler
         }
 
         var secrets = SecretStore.Open(options);
-        var tokenProvider = new Microsoft365TokenProvider(
-            options.Upstream.Microsoft365, secrets, NullLogger<Microsoft365TokenProvider>.Instance);
+        using var tokenProvider = new EntraTokenProvider(
+            options.Upstream, secrets, NullLogger<EntraTokenProvider>.Instance);
         var sender = new UpstreamSender(
             options.Upstream, secrets, tokenProvider, NullLogger<UpstreamSender>.Instance);
 
@@ -232,14 +232,20 @@ public static class CommandLineHandler
                 sb.AppendLine($"  Password           : {(secrets.Contains(o.Upstream.Basic.PasswordSecret) ? "[set]" : "[MISSING]")} (secret '{o.Upstream.Basic.PasswordSecret}')");
                 break;
             case UpstreamAuthMode.Microsoft365:
-                sb.AppendLine($"  TenantId           : {o.Upstream.Microsoft365.TenantId}");
-                sb.AppendLine($"  ClientId           : {o.Upstream.Microsoft365.ClientId}");
                 sb.AppendLine($"  SenderUsername     : {o.Upstream.Microsoft365.SenderUsername}");
-                sb.AppendLine($"  ClientSecret       : {(secrets.Contains(o.Upstream.Microsoft365.ClientSecretName) ? "[set]" : "[MISSING]")} (secret '{o.Upstream.Microsoft365.ClientSecretName}')");
+                AppendEntraApplication(sb, o.Upstream.Microsoft365, secrets);
+                break;
+            case UpstreamAuthMode.AzureCommunicationServices:
+                sb.AppendLine($"  SmtpUsername       : {o.Upstream.AzureCommunication.SmtpUsername}");
+                AppendEntraApplication(sb, o.Upstream.AzureCommunication, secrets);
                 break;
         }
         sb.AppendLine($"Logs                 : {o.LogDirectory} (keep {o.Logging.RetainedFileCountLimit} files / {o.Logging.RetainedFileTimeLimitDays?.ToString() ?? "unlimited"} days)");
         sb.AppendLine($"Failed-message spool : {(o.Delivery.SpoolFailedMessages ? o.FailedSpoolDirectory : "(off)")}");
+        sb.AppendLine(o.Snmp.Enabled
+            ? $"SNMP agent           : UDP {o.Snmp.IpAddress}:{o.Snmp.Port}, community {(secrets.Contains(o.Snmp.CommunitySecret) ? "[set]" : "[MISSING]")} (secret '{o.Snmp.CommunitySecret}'), " +
+              $"managers {(o.Snmp.AllowedManagers.Count == 0 ? "(none)" : string.Join(", ", o.Snmp.AllowedManagers))}"
+            : "SNMP agent           : off");
 
         var errors = RelayOptionsValidator.Validate(o);
         var warnings = RelayOptionsValidator.Warnings(o);
@@ -252,6 +258,24 @@ public static class CommandLineHandler
 
         Console.WriteLine(sb.ToString());
         return errors.Count == 0 ? 0 : 2;
+    }
+
+    private static void AppendEntraApplication(StringBuilder sb, EntraApplicationOptions app, SecretStore secrets)
+    {
+        sb.AppendLine($"  TenantId           : {app.TenantId}");
+        sb.AppendLine($"  ClientId           : {app.ClientId}");
+        if (app.Credential == EntraCredentialType.Certificate)
+        {
+            using var certificate = CertificateFinder.FindInLocalMachine(app.CertificateThumbprint);
+            var state = certificate is null
+                ? "[MISSING from LocalMachine\\My]"
+                : CertificateFinder.DescribeProblem(certificate) is { } problem ? "[" + problem + "]" : $"[found, expires {certificate.NotAfter:yyyy-MM-dd}]";
+            sb.AppendLine($"  Certificate        : {CertificateFinder.Normalize(app.CertificateThumbprint)} {state}");
+        }
+        else
+        {
+            sb.AppendLine($"  ClientSecret       : {(secrets.Contains(app.ClientSecretName) ? "[set]" : "[MISSING]")} (secret '{app.ClientSecretName}')");
+        }
     }
 
     private static int? RequireAdmin()
@@ -318,7 +342,7 @@ public static class CommandLineHandler
     {
         Console.WriteLine(
 $"""
-{AppInfo.ProductName} {AppInfo.Version} - Windows SMTP relay with IP allowlist, TLS and Basic / Microsoft 365 authentication.
+{AppInfo.ProductName} {AppInfo.Version} - Windows SMTP relay with IP allowlist, TLS and Basic / Microsoft 365 / Azure Communication Services authentication.
 
 USAGE:
   SmtpRelay <command> [options]

@@ -30,6 +30,8 @@
     <None Update="appsettings.json" CopyToOutputDirectory="PreserveNewest" />
     <!-- Development overrides (port 2525) are for "dotnet run" only and are never published. -->
     <Content Update="appsettings.Development.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Never" />
+    <!-- The MIB module of the SNMP agent is installed in the "mib" folder next to the executables. -->
+    <Content Include="..\..\mib\NEXQ-SMTP-RELAY-MIB.txt" Link="mib\NEXQ-SMTP-RELAY-MIB.txt" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>
