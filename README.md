@@ -21,7 +21,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version 2.1.0" src="https://img.shields.io/badge/version-2.1.0-2563eb">
+  <img alt="Version 2.2.0" src="https://img.shields.io/badge/version-2.2.0-2563eb">
   <img alt="Windows Server and Windows 10/11" src="https://img.shields.io/badge/Windows-Server%202016%2B%20%7C%2010%20%7C%2011-0f766e">
   <img alt="Microsoft 365 OAuth2" src="https://img.shields.io/badge/Microsoft%20365-OAuth2-7c3aed">
   <img alt="Self-hosted" src="https://img.shields.io/badge/self--hosted-on%20premises-475569">
@@ -61,7 +61,7 @@ SMTP Relay sits between those devices and your mail system:
 <table>
   <tr>
     <td width="50%"><img src="assets/screenshots/smarthost.png" alt="Smart host page"><br><b>Smart host</b>: Microsoft 365 or Azure Communication Services with OAuth2 (client secret or certificate), user name and password, or no authentication. The secret is stored encrypted with one click; <i>Test connection</i> and <i>Send a test message</i> use the settings on screen.</td>
-    <td width="50%"><img src="assets/screenshots/access.png" alt="Allowed senders page"><br><b>Allowed senders</b>: single addresses and CIDR networks, IPv4 and IPv6. Everything else is disconnected before the greeting.</td>
+    <td width="50%"><img src="assets/screenshots/access.png" alt="Allowed senders page"><br><b>Allowed senders</b>: addresses and CIDR networks, plus the relay's own users for devices that sign in. The list can be imported from IIS 6.</td>
   </tr>
   <tr>
     <td width="50%"><img src="assets/screenshots/logs.png" alt="Logs page"><br><b>Logs</b>: the delivery audit trail and the application log, live, with a filter by address, subject or outcome.</td>
@@ -77,7 +77,7 @@ SMTP Relay sits between those devices and your mail system:
   </tr>
 </table>
 
-<sub>The screenshots show the real interface of version 2.1.0 with sample data (addresses, tenants and messages are examples).</sub>
+<sub>The screenshots show the real interface of version 2.2.0 with sample data (addresses, tenants and messages are examples).</sub>
 
 ## Features
 
@@ -86,6 +86,11 @@ SMTP Relay sits between those devices and your mail system:
   message, concurrent sessions and idle time.
 - **IP allowlist** with single addresses and CIDR networks (IPv4 and IPv6), applied at connection level. Fail-closed:
   an empty list refuses every connection unless you explicitly turn that off.
+- **Sign-in with user name and password** (SMTP AUTH PLAIN and LOGIN), off by default, optional or required. The
+  users are created in the console and belong to the relay: they are not Windows accounts. Only a salted hash of
+  each password is kept.
+- **Import from IIS 6**: one button copies the computers of the *Relay restrictions* of the IIS SMTP virtual server
+  into the allowlist.
 - **STARTTLS for clients**, optional or required, TLS 1.2 or 1.3 only, with a certificate from `LocalMachine\My`
   (recommended) or a `.pfx` file whose password is kept in the encrypted store.
 
@@ -130,16 +135,16 @@ SMTP Relay sits between those devices and your mail system:
 You need a Windows Server (or Windows 10/11) that your devices can reach, and administrator rights on it.
 Nothing else: the .NET runtime is included in the setup.
 
-**1. Download** `SmtpRelay-Setup-2.1.0.exe` from the
+**1. Download** `SmtpRelay-Setup-2.2.0.exe` from the
 [latest release](https://github.com/NEXQsrl/SMTP-Relay/releases/latest). The release lists the SHA-256 of every file
-(`SHA256SUMS.txt`): check it with `Get-FileHash .\SmtpRelay-Setup-2.1.0.exe -Algorithm SHA256`.
+(`SHA256SUMS.txt`): check it with `Get-FileHash .\SmtpRelay-Setup-2.2.0.exe -Algorithm SHA256`.
 
 **2. Trust the signature (once per server).** The files are signed by *NEXQ S.r.l.* with a self-signed certificate.
 Windows trusts it only after you import it. The public certificate is inside the signature of the file; extract it,
 check that its thumbprint is `989A5C82203AB19B6DB29FC447E8CB5EBEEB60D8`, then import it (elevated PowerShell):
 
 ```powershell
-$cert = (Get-AuthenticodeSignature .\SmtpRelay-Setup-2.1.0.exe).SignerCertificate
+$cert = (Get-AuthenticodeSignature .\SmtpRelay-Setup-2.2.0.exe).SignerCertificate
 $cert.Thumbprint          # must be 989A5C82203AB19B6DB29FC447E8CB5EBEEB60D8
 Export-Certificate -Cert $cert -FilePath .\NEXQ-CodeSigning.cer | Out-Null
 Import-Certificate -FilePath .\NEXQ-CodeSigning.cer -CertStoreLocation Cert:\LocalMachine\Root
@@ -156,7 +161,7 @@ After this, Windows shows *Verified publisher: NEXQ S.r.l.* when you run the set
 
 | Page | What to set |
 |---|---|
-| **Allowed senders** | The IP addresses or networks of your devices, for example `192.168.10.0/24`. |
+| **Allowed senders** | The IP addresses or networks of your devices, for example `192.168.10.0/24`. If this server runs the IIS 6 SMTP relay, **Import from IIS 6** copies its list. Optionally, users for devices that sign in (see [below](#users-and-sign-in)). |
 | **Smart host** | *Microsoft 365* (see [below](#microsoft-365-setup)), *Azure Communication Services* (see [below](#azure-communication-services-setup)), or host, port and credentials of your server. Type the secret and press **Store**. |
 | **Listener** | The port, if 25 is not what you want. |
 
@@ -179,7 +184,7 @@ if you configured a certificate). Each message appears in the **Logs** page with
 ### Unattended installation
 
 ```powershell
-.\SmtpRelay-Setup-2.1.0.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG="C:\Temp\smtprelay-setup.log"
+.\SmtpRelay-Setup-2.2.0.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG="C:\Temp\smtprelay-setup.log"
 ```
 
 Then copy your `appsettings.json` to the installation folder, store the secret and start the service:
@@ -275,6 +280,50 @@ The certificate expires: the console and `SmtpRelay.exe show-config` show the da
 before that day. If the service runs as a dedicated account instead of LocalSystem, give that account read access
 to the private key (*certlm.msc > the certificate > All Tasks > Manage Private Keys*).
 
+## Users and sign-in
+
+By default the relay works like the IIS relay: the IP allowlist decides who may send and nobody signs in. If you
+prefer, or need, devices and applications to sign in with a user name and a password, turn it on in
+**Allowed senders > Sign-in with user name and password**.
+
+| Mode | Who can send |
+|---|---|
+| **Off** (default) | Addresses of the allowlist, without a password |
+| **Optional** | Addresses of the allowlist, with or without a password. The audit trail names the user when there is one |
+| **Required** | Only clients that sign in. The allowlist still decides who can connect |
+
+Two switches refine it:
+
+- **Users who sign in can connect from any address.** Off, the allowlist applies to everyone. On, a computer
+  outside the allowlist can connect but can send only after signing in (it receives `530 5.7.0 Authentication
+  required` otherwise). The relay then answers every computer that reaches its port: use it on an internal network
+  only.
+- **Accept passwords on connections that are not encrypted.** Off, a password is accepted only after STARTTLS, so
+  inbound TLS must be on (the console tells you). On, devices that cannot use TLS can sign in, and their user names
+  and passwords travel in clear text on the network.
+
+**Users** are created in the same card (name and password, at least 8 characters), or with
+`SmtpRelay.exe set-user --name <user>`. They can be disabled without deleting them. A new, changed or removed user
+reaches the running service at once; the three settings above need a restart of the service. The relay keeps a
+salted hash (PBKDF2-SHA256) of each password in `C:\ProgramData\SmtpRelay\users.json`: a forgotten password cannot
+be read back, only changed. These users are not Windows or Active Directory accounts, and they are not the account
+the relay uses on the smart host.
+
+After ten wrong passwords in ten minutes an address is refused for the rest of that time, and every wrong password
+is answered with a delay. Failed sign-ins are written to the application log, never with the password.
+
+On the device, set this server as SMTP server, the port of the relay, *authentication: yes* with the user and the
+password, and STARTTLS if the device supports it.
+
+### Coming from the IIS 6 SMTP relay
+
+Open the console on the server where IIS runs and press **Import from IIS 6** in **Allowed senders**. The console
+reads the list *Relay restrictions > Only the list below* of the SMTP virtual server (single computers and groups of
+computers), shows what it found and adds the entries that are missing. Nothing in IIS is changed. Entries given as
+domain names cannot be imported, and neither can a list set to *All except the list below*. IIS and this relay
+cannot listen on the same port at the same time: stop the IIS SMTP service (or change its port) before starting
+the relay on port 25.
+
 ## Antivirus, SmartScreen and the signature
 
 Every executable and library of SMTP Relay, the setup and the uninstaller are signed by **NEXQ S.r.l.** and
@@ -284,7 +333,7 @@ no public authority vouches for it, so Windows and security products do not know
 | What you see | Why | What to do |
 |---|---|---|
 | *Unknown publisher* in the UAC prompt | The certificate is not trusted on this computer yet | Import it as in [step 2](#install-in-five-minutes). The prompt then shows *Verified publisher: NEXQ S.r.l.* |
-| *Windows protected your PC* (SmartScreen) | The file was downloaded from the Internet and has no reputation; a self-signed signature does not build any | *More info > Run anyway*, or first run `Unblock-File .\SmtpRelay-Setup-2.1.0.exe` after checking its SHA-256 |
+| *Windows protected your PC* (SmartScreen) | The file was downloaded from the Internet and has no reputation; a self-signed signature does not build any | *More info > Run anyway*, or first run `Unblock-File .\SmtpRelay-Setup-2.2.0.exe` after checking its SHA-256 |
 | *Access denied* when starting the setup or the programs, event 1121 of Microsoft Defender | The attack surface reduction rule *Block executable files from running unless they meet a prevalence, age, or trusted list criterion* blocks any new program | Add an exclusion (below), or in Microsoft Defender for Endpoint create an **Allow** indicator for the certificate |
 | The antivirus quarantines or blocks a file | Heuristics on a new, rarely seen program that listens on a port | Check the SHA-256 against the release, then allow the publisher certificate or exclude the installation folder |
 
@@ -292,7 +341,7 @@ Exclusion for the Microsoft Defender attack surface reduction rules (elevated Po
 only while you run the setup):
 
 ```powershell
-Add-MpPreference -AttackSurfaceReductionOnlyExclusions "C:\Install\SmtpRelay-Setup-2.1.0.exe"
+Add-MpPreference -AttackSurfaceReductionOnlyExclusions "C:\Install\SmtpRelay-Setup-2.2.0.exe"
 Add-MpPreference -AttackSurfaceReductionOnlyExclusions "C:\Program Files\SMTP Relay"
 ```
 
@@ -343,15 +392,15 @@ Everything is under `C:\ProgramData\SmtpRelay\logs` (the folder can be changed),
 
 | File | Content |
 |---|---|
-| `audit-YYYYMMDD.log` | One line per message: `DELIVERED` or `FAILED`, client address, sender, recipients, size, subject, duration or reason |
+| `audit-YYYYMMDD.log` | One line per message: `DELIVERED` or `FAILED`, client address, relay user (`-` when the client did not sign in), sender, recipients, size, subject, duration or reason |
 | `smtp-relay-YYYYMMDD.log` | Application log: start and stop, refused connections, retries, errors with details |
 | `manager-YYYYMM.log` | What administrators did in the console: settings saved, secrets changed, service started or stopped, updates |
 | Windows event log | Warnings and errors, log *Application*, source `SmtpRelay` |
 | `..\failed\*.eml` | A copy of each message that was not delivered, for diagnosis or to send it again by hand |
 
 ```
-2026-11-11 10:38:40.106 +01:00 DELIVERED client=10.20.4.12 from=erp@contoso.com to=orders@fabrikam.com size=24110 subject=Order confirmation 55012 durationMs=655
-2026-11-11 10:42:07.118 +01:00 FAILED client=192.168.10.44 from=scanner@contoso.com to=m.rossi@fabrikam.com size=4821330 subject=Scan 0042 permanent=True reason=5.7.60 Client does not have permissions to send as this sender
+2026-11-11 10:38:40.106 +01:00 DELIVERED client=10.20.4.12 user=erp@contoso.com from=erp@contoso.com to=orders@fabrikam.com size=24110 subject=Order confirmation 55012 durationMs=655
+2026-11-11 10:42:07.118 +01:00 FAILED client=192.168.10.44 user=- from=scanner@contoso.com to=m.rossi@fabrikam.com size=4821330 subject=Scan 0042 permanent=True reason=5.7.60 Client does not have permissions to send as this sender
 ```
 
 A new file starts every day and when the size limit is reached; files older than the retention are deleted
@@ -415,6 +464,9 @@ The console writes `appsettings.json` for you. Every setting can also be set wit
 | `Listener.MaxConcurrentSessions` | `50` | Sessions served at the same time |
 | `Security.AllowedIps` | `127.0.0.1`, `::1` | Addresses and CIDR networks allowed to send |
 | `Security.RejectWhenAllowListEmpty` | `true` | Empty list refuses everyone |
+| `Security.Authentication.Mode` | `Disabled` | Sign-in of the clients: `Disabled`, `Optional`, `Required` |
+| `Security.Authentication.AllowFromAnyAddress` | `false` | Users who sign in can connect from outside the allowlist |
+| `Security.Authentication.AllowWithoutTls` | `false` | Accept passwords on sessions that are not encrypted |
 | `Tls.Mode` | `None` | `None`, `StartTlsOptional`, `StartTlsRequired` |
 | `Tls.CertificateThumbprint` / `CertificatePath` | empty | Certificate for STARTTLS |
 | `Upstream.Mode` | `Microsoft365` | `Microsoft365`, `AzureCommunicationServices`, `Basic`, `Anonymous` |
@@ -436,7 +488,8 @@ The console writes `appsettings.json` for you. Every setting can also be set wit
 | `Snmp.CommunitySecret` | `SnmpCommunity` | Name of the stored secret that holds the community |
 
 Secrets (`M365ClientSecret`, `AcsClientSecret`, `UpstreamPassword`, `TlsCertPassword`, `SnmpCommunity`) are never in this file: the settings only
-contain the *name* of the secret, the value is in the encrypted store.
+contain the *name* of the secret, the value is in the encrypted store. The users of the relay are in `users.json`
+in the data folder, as salted hashes.
 
 ### Command line
 
@@ -449,6 +502,8 @@ contain the *name* of the secret, the value is in the encrypted store.
 | `start` · `stop` · `restart` · `status` | Controls the service (`status` returns 0 when it is running) |
 | `set-credential --name <name> [--stdin]` | Stores a secret, encrypted |
 | `remove-credential --name <name>` · `list-credentials` | Removes a secret · lists the names (never the values) |
+| `set-user --name <user> [--stdin]` | Creates a relay user or changes its password |
+| `disable-user` · `enable-user` · `remove-user --name <user>` · `list-users` | Stops a user from signing in · lets it sign in again · removes it · lists the users |
 | `test-upstream` | Connects and signs in to the smart host |
 | `show-config` | Shows the effective configuration, warnings and errors |
 
@@ -479,6 +534,11 @@ folder and removes the old one. Data in `C:\ProgramData\SmtpRelay` does not move
 firewall rule are removed. The setup asks whether to delete settings, secrets and logs too; by default they are kept.
 
 ## Project status
+
+Version 2.2.0 adds the sign-in of the clients with the relay's own users and the import of the allowlist from IIS 6.
+The sign-in is covered by the automated tests against the real listener. **The import from IIS 6 has been tested
+only with data built for the tests**, not on a server with the IIS SMTP service: check the entries it proposes
+before you save. The audit line has a new field, `user=`, after `client=`: adjust anything that parses it.
 
 Version 2.1.0 adds Azure Communication Services, certificate credentials and the SNMP agent. The SNMP agent is
 tested against an independent SNMP client, and the two OAuth2 modes against a test server. **Signing in to the real

@@ -8,6 +8,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using MimeKit;
 using SmtpRelay.Configuration;
 using SmtpRelay.Manager.Services;
+using SmtpRelay.Migration;
 using SmtpRelay.Monitoring;
 using SmtpRelay.Relay;
 using SmtpRelay.Security;
@@ -17,6 +18,14 @@ namespace SmtpRelay.Manager.ViewModels;
 /// <summary>A certificate of LocalMachine\My that can be used for inbound TLS.</summary>
 public sealed record CertificateChoice(string Thumbprint, string Display);
 
+/// <summary>A user of the relay, as shown in the list of the Allowed senders page.</summary>
+public sealed record RelayUserRow(string Name, bool Enabled)
+{
+    public string StateText => Enabled ? "Can sign in" : "Disabled";
+    public string StateKind => Enabled ? "Ok" : "Off";
+    public string ToggleText => Enabled ? "Disable" : "Enable";
+}
+
 /// <summary>State of the management console.</summary>
 public sealed class MainViewModel : INotifyPropertyChanged
 {
@@ -24,6 +33,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private readonly ServiceManager _service = new();
     private readonly UpdateService _updates = new();
     private SecretStore? _secrets;
+    private RelayUserStore? _users;
     private string _savedSnapshot = "";
 
     public MainViewModel(string configDirectory, bool isDemo = false)
@@ -45,6 +55,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     public ObservableCollection<string> AllowedIps { get; } = new();
     public ObservableCollection<string> SnmpManagers { get; } = new();
+    public ObservableCollection<RelayUserRow> Users { get; } = new();
     public ObservableCollection<string> Errors { get; } = new();
     public ObservableCollection<string> Warnings { get; } = new();
     public ObservableCollection<CertificateChoice> Certificates { get; } = new();
@@ -74,6 +85,15 @@ public sealed class MainViewModel : INotifyPropertyChanged
         {
             try { _secrets = SecretStore.Open(Options); }
             catch (Exception ex) { SecretStoreError = ex.Message; }
+        }
+
+        _users = null;
+        UserStoreError = null;
+        if (!IsDemo)
+        {
+            try { _users = RelayUserStore.Open(Options); }
+            catch (Exception ex) { UserStoreError = ex.Message; }
+            RefreshUsers();
         }
 
         _savedSnapshot = Snapshot();
@@ -112,6 +132,13 @@ public sealed class MainViewModel : INotifyPropertyChanged
         {
             warnings.Insert(0, "The secret store cannot be opened: " + SecretStoreError);
         }
+        if (SignInEnabled && !IsDemo)
+        {
+            if (UserStoreError is not null)
+                warnings.Insert(0, "The users of the relay cannot be read: " + UserStoreError);
+            else if (!Users.Any(u => u.Enabled))
+                warnings.Insert(0, "Sign-in is on but no user can sign in yet (Allowed senders page).");
+        }
         if (!IsDemo && UsesCertificate && EntraCertificateProblem is { } certificateProblem)
             warnings.Insert(0, certificateProblem + " (Smart host page)");
         Replace(Warnings, warnings);
@@ -134,6 +161,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(EntraCertificateStatus));
         OnPropertyChanged(nameof(SnmpSummary));
         OnPropertyChanged(nameof(SnmpExample));
+        OnPropertyChanged(nameof(SignInTlsNote));
     }
 
     private static void Replace(ObservableCollection<string> target, IEnumerable<string> items)
@@ -174,12 +202,27 @@ public sealed class MainViewModel : INotifyPropertyChanged
         _ => $"No authentication · {Options.Upstream.Host}:{Options.Upstream.Port}"
     };
 
-    public string AccessSummary => AllowedIps.Count switch
+    public string AccessSummary
     {
-        0 => Options.Security.RejectWhenAllowListEmpty ? "Nobody (the allowlist is empty)" : "Anyone (open relay)",
-        1 => "1 address or network",
-        _ => $"{AllowedIps.Count} addresses or networks"
-    };
+        get
+        {
+            var auth = Options.Security.Authentication;
+            var addresses = AllowedIps.Count switch
+            {
+                0 when SignInEnabled && auth.AllowFromAnyAddress => "No address in the allowlist",
+                0 => Options.Security.RejectWhenAllowListEmpty ? "Nobody (the allowlist is empty)" : "Anyone (open relay)",
+                1 => "1 address or network",
+                _ => $"{AllowedIps.Count} addresses or networks"
+            };
+            return auth.Mode switch
+            {
+                InboundAuthMode.Required => addresses + " · sign-in required",
+                InboundAuthMode.Optional when auth.AllowFromAnyAddress => addresses + " · users who sign in, from any address",
+                InboundAuthMode.Optional => addresses + " · sign-in optional",
+                _ => addresses
+            };
+        }
+    }
 
     /// <summary>Saves the settings. Returns false when they are not valid.</summary>
     public bool Save()
@@ -491,6 +534,148 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public void RemoveAllowedIp(string entry)
     {
         AllowedIps.Remove(entry);
+        Revalidate();
+    }
+
+    /// <summary>Reads the relay restrictions of the IIS 6 SMTP service of this computer. Null when IIS is not here.</summary>
+    public static Iis6RelayImport? ReadIis6RelayList() => Iis6RelayList.ReadLocal();
+
+    /// <summary>Adds the entries that are valid and not yet in the allowlist. Returns how many were added.</summary>
+    public int ImportAllowedIps(IEnumerable<string> entries, string source)
+    {
+        var added = new List<string>();
+        foreach (var entry in entries)
+        {
+            if (IpAllowList.TryParse(entry, out _) && !AllowedIps.Contains(entry, StringComparer.OrdinalIgnoreCase))
+            {
+                AllowedIps.Add(entry);
+                added.Add(entry);
+            }
+        }
+        if (added.Count > 0)
+            ManagerLog.Write($"Allowlist: {added.Count} entr{(added.Count == 1 ? "y" : "ies")} imported from {source} (not saved yet): {string.Join(", ", added)}.");
+        Revalidate();
+        return added.Count;
+    }
+
+    // ----- sign-in of the clients and users of the relay -------------------------------------------------
+
+    public string? UserStoreError { get; private set; }
+
+    public bool SignInEnabled => Options.Security.Authentication.Mode != InboundAuthMode.Disabled;
+
+    public bool IsSignInOff
+    {
+        get => Options.Security.Authentication.Mode == InboundAuthMode.Disabled;
+        set { if (value) SetSignInMode(InboundAuthMode.Disabled); }
+    }
+
+    public bool IsSignInOptional
+    {
+        get => Options.Security.Authentication.Mode == InboundAuthMode.Optional;
+        set { if (value) SetSignInMode(InboundAuthMode.Optional); }
+    }
+
+    public bool IsSignInRequired
+    {
+        get => Options.Security.Authentication.Mode == InboundAuthMode.Required;
+        set { if (value) SetSignInMode(InboundAuthMode.Required); }
+    }
+
+    private void SetSignInMode(InboundAuthMode mode)
+    {
+        if (Options.Security.Authentication.Mode == mode)
+            return;
+        Options.Security.Authentication.Mode = mode;
+        OnPropertyChanged(nameof(IsSignInOff));
+        OnPropertyChanged(nameof(IsSignInOptional));
+        OnPropertyChanged(nameof(IsSignInRequired));
+        OnPropertyChanged(nameof(SignInEnabled));
+        Revalidate();
+    }
+
+    /// <summary>How passwords travel with the current TLS settings: shown under the "without TLS" switch.</summary>
+    public string SignInTlsNote => Options.Tls.Mode switch
+    {
+        InboundTlsMode.None => "Inbound TLS is off (Inbound TLS page): unless you turn this on nobody can sign in, and when it is on user names and passwords travel in clear text on the network.",
+        InboundTlsMode.StartTlsRequired => "Inbound TLS is required for every client, so passwords are always encrypted and this setting has no effect.",
+        _ => "Leave it off when your devices support STARTTLS. Turn it on only for devices that cannot encrypt: their user names and passwords travel in clear text on the network."
+    };
+
+    public void RefreshUsers()
+    {
+        if (IsDemo || _users is null)
+            return;
+        try
+        {
+            SetUsers(_users.Users.Select(u => new RelayUserRow(u.Name, u.Enabled)));
+            UserStoreError = null;
+        }
+        catch (Exception ex)
+        {
+            UserStoreError = ex.Message;
+        }
+    }
+
+    public void SetUsers(IEnumerable<RelayUserRow> users)
+    {
+        var list = users.ToList();
+        if (Users.SequenceEqual(list))
+            return;
+        Users.Clear();
+        foreach (var user in list)
+            Users.Add(user);
+    }
+
+    private RelayUserStore UserStore
+        => _users ?? throw new InvalidOperationException(UserStoreError ?? "The users of the relay are not available.");
+
+    /// <summary>Creates a user. Returns an error message, or null when it was created. Takes effect at once.</summary>
+    public string? AddUser(string? name, string password)
+    {
+        name = name?.Trim() ?? "";
+        if (!RelayUserStore.IsValidUserName(name))
+            return "Type a user name of 1-64 characters: letters, digits, '.', '_', '-' and '@'.";
+        if (RelayUserStore.DescribePasswordProblem(password) is { } problem)
+            return problem;
+
+        try
+        {
+            if (UserStore.Contains(name))
+                return $"The user '{name}' already exists. Use \"Change password\" in the list.";
+            UserStore.Set(name, password);
+        }
+        catch (Exception ex)
+        {
+            return "The user was not created: " + ex.Message;
+        }
+
+        ManagerLog.Write($"Relay user '{name}' created.");
+        RefreshUsers();
+        Revalidate();
+        return null;
+    }
+
+    public void ChangeUserPassword(string name, string password)
+    {
+        UserStore.Set(name, password);
+        ManagerLog.Write($"Password of relay user '{name}' changed.");
+        RefreshUsers();
+    }
+
+    public void SetUserEnabled(string name, bool enabled)
+    {
+        UserStore.SetEnabled(name, enabled);
+        ManagerLog.Write($"Relay user '{name}' {(enabled ? "enabled" : "disabled")}.");
+        RefreshUsers();
+        Revalidate();
+    }
+
+    public void RemoveUser(string name)
+    {
+        if (UserStore.Remove(name))
+            ManagerLog.Write($"Relay user '{name}' removed.");
+        RefreshUsers();
         Revalidate();
     }
 
@@ -934,7 +1119,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public string PageSubtitle => Page switch
     {
         "Listener" => "Where the relay listens and the limits it applies to incoming mail.",
-        "Access" => "Only these IP addresses and networks may send mail through the relay.",
+        "Access" => "Who may send mail through the relay: IP addresses and networks, and users who sign in.",
         "SmartHost" => "The server the mail is forwarded to, and how the relay signs in.",
         "Tls" => "Encryption between your devices and the relay (STARTTLS).",
         "Logging" => "What is recorded, where, and for how long.",

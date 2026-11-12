@@ -117,7 +117,7 @@ public sealed class RelayEndToEndTests : IAsyncLifetime
         Assert.Contains(".leading dot line", received.Message.TextBody);
 
         var audit = Assert.Single(_logs.Entries, e => e.Category == LoggingSetup.AuditSourceContext);
-        Assert.StartsWith("DELIVERED client=127.0.0.1 from=printer@corp.example to=alice@example.org,bob@example.org", audit.Message);
+        Assert.StartsWith("DELIVERED client=127.0.0.1 user=- from=printer@corp.example to=alice@example.org,bob@example.org", audit.Message);
         Assert.Equal((1, 0), _counters.Today); // one message, whatever the number of recipients
     }
 

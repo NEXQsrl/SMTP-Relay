@@ -21,6 +21,7 @@ public static class CommandLineHandler
         "help", "--help", "-h", "/?", "version", "--version",
         "install", "uninstall", "start", "stop", "restart", "status",
         "set-credential", "remove-credential", "list-credentials",
+        "set-user", "remove-user", "enable-user", "disable-user", "list-users",
         "test-upstream", "show-config"
     };
 
@@ -46,6 +47,11 @@ public static class CommandLineHandler
                 "set-credential" => SetCredential(options, map),
                 "remove-credential" => RemoveCredential(options, map),
                 "list-credentials" => ListCredentials(options),
+                "set-user" => SetUser(options, map),
+                "remove-user" => RemoveUser(options, map),
+                "enable-user" => EnableUser(options, map, enabled: true),
+                "disable-user" => EnableUser(options, map, enabled: false),
+                "list-users" => ListUsers(options),
                 "test-upstream" => await TestUpstreamAsync(options),
                 "show-config" => ShowConfig(options),
                 _ => PrintHelp()
@@ -175,6 +181,91 @@ public static class CommandLineHandler
         return 0;
     }
 
+    private static int SetUser(RelayOptions options, Dictionary<string, string> map)
+    {
+        if (!map.TryGetValue("name", out var name) || !RelayUserStore.IsValidUserName(name))
+        {
+            Console.Error.WriteLine("Usage: SmtpRelay set-user --name <user> [--stdin]");
+            Console.Error.WriteLine("A user name is 1-64 characters: letters, digits, '.', '_', '-' and '@'.");
+            return 2;
+        }
+
+        string password;
+        if (map.ContainsKey("stdin") || Console.IsInputRedirected)
+        {
+            password = Console.In.ReadToEnd().TrimEnd('\r', '\n');
+        }
+        else
+        {
+            password = ReadMasked($"Password for '{name}': ");
+            if (ReadMasked("Type it again: ") != password)
+            {
+                Console.Error.WriteLine("The two passwords are different: nothing was saved.");
+                return 2;
+            }
+        }
+
+        if (RelayUserStore.DescribePasswordProblem(password) is { } problem)
+        {
+            Console.Error.WriteLine(problem + " Nothing was saved.");
+            return 2;
+        }
+
+        var users = RelayUserStore.Open(options);
+        bool existed = users.Contains(name);
+        users.Set(name, password);
+        Console.WriteLine(existed ? $"Password of user '{name}' changed." : $"User '{name}' created.");
+        if (options.Security.Authentication.Mode == InboundAuthMode.Disabled)
+            Console.WriteLine("Note: sign-in of the clients is off (Security.Authentication.Mode is Disabled), so the user is not used yet.");
+        return 0;
+    }
+
+    private static int RemoveUser(RelayOptions options, Dictionary<string, string> map)
+    {
+        if (!map.TryGetValue("name", out var name) || string.IsNullOrWhiteSpace(name))
+        {
+            Console.Error.WriteLine("Usage: SmtpRelay remove-user --name <user>");
+            return 2;
+        }
+
+        Console.WriteLine(RelayUserStore.Open(options).Remove(name)
+            ? $"User '{name}' removed."
+            : $"User '{name}' not found.");
+        return 0;
+    }
+
+    private static int EnableUser(RelayOptions options, Dictionary<string, string> map, bool enabled)
+    {
+        if (!map.TryGetValue("name", out var name) || string.IsNullOrWhiteSpace(name))
+        {
+            Console.Error.WriteLine($"Usage: SmtpRelay {(enabled ? "enable-user" : "disable-user")} --name <user>");
+            return 2;
+        }
+
+        if (!RelayUserStore.Open(options).SetEnabled(name, enabled))
+        {
+            Console.Error.WriteLine($"User '{name}' not found.");
+            return 1;
+        }
+        Console.WriteLine(enabled ? $"User '{name}' can sign in again." : $"User '{name}' can no longer sign in.");
+        return 0;
+    }
+
+    private static int ListUsers(RelayOptions options)
+    {
+        var users = RelayUserStore.Open(options).Users;
+        if (users.Count == 0)
+        {
+            Console.WriteLine("No user exists.");
+            return 0;
+        }
+
+        Console.WriteLine("Users of the relay (passwords are never shown):");
+        foreach (var user in users)
+            Console.WriteLine($"  - {user.Name}{(user.Enabled ? "" : "  [disabled]")}");
+        return 0;
+    }
+
     private static async Task<int> TestUpstreamAsync(RelayOptions options)
     {
         var errors = RelayOptionsValidator.Validate(options);
@@ -224,6 +315,27 @@ public static class CommandLineHandler
         sb.AppendLine($"Limits               : {o.Listener.MaxMessageSizeBytes} bytes per message, {o.Listener.MaxRecipients} recipients, {o.Listener.MaxConcurrentSessions} sessions");
         sb.AppendLine($"Inbound TLS          : {o.Tls.Mode} (minimum {o.Tls.MinimumProtocol})");
         sb.AppendLine($"Allowed IPs          : {(o.Security.AllowedIps.Count == 0 ? "(empty)" : string.Join(", ", o.Security.AllowedIps))}");
+        var auth = o.Security.Authentication;
+        if (auth.Mode == InboundAuthMode.Disabled)
+        {
+            sb.AppendLine("Sign-in of clients   : off (the allowlist alone decides)");
+        }
+        else
+        {
+            string users;
+            try
+            {
+                var list = RelayUserStore.Open(o).Users;
+                users = $"{list.Count(u => u.Enabled)} user(s) can sign in" + (list.Any(u => !u.Enabled) ? $", {list.Count(u => !u.Enabled)} disabled" : "");
+            }
+            catch (Exception ex)
+            {
+                users = "[users cannot be read: " + ex.Message + "]";
+            }
+            sb.AppendLine($"Sign-in of clients   : {auth.Mode}, {users}, " +
+                          $"{(auth.AllowFromAnyAddress ? "from any address" : "from the allowlist only")}, " +
+                          $"{(auth.AllowWithoutTls ? "also without TLS" : "only with TLS")}");
+        }
         sb.AppendLine($"Upstream             : {o.Upstream.Mode} -> {o.Upstream.Host}:{o.Upstream.Port} ({o.Upstream.Security})");
         switch (o.Upstream.Mode)
         {
@@ -356,6 +468,12 @@ CREDENTIALS (encrypted with DPAPI, bound to this computer):
   set-credential --name <name> [--stdin]           Saves a secret (asks for the value, or reads it from stdin)
   remove-credential --name <name>                  Removes a secret
   list-credentials                                 Lists the names of the stored secrets
+
+USERS (for clients that sign in to the relay; they are not Windows accounts):
+  set-user --name <user> [--stdin]                 Creates a user or changes its password (asks for it, or reads it from stdin)
+  disable-user | enable-user --name <user>         Stops a user from signing in, or lets it sign in again
+  remove-user --name <user>                        Removes a user
+  list-users                                       Lists the users
 
 DIAGNOSTICS:
   test-upstream        Connects and authenticates to the smart host

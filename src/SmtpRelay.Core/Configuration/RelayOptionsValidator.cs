@@ -54,6 +54,14 @@ public static partial class RelayOptionsValidator
                 errors.Add($"Security.AllowedIps: '{entry}' is not an IP address or a CIDR network.");
         }
 
+        // Sign-in of the clients
+        var auth = o.Security.Authentication;
+        if (auth.Mode != InboundAuthMode.Disabled && o.Tls.Mode == InboundTlsMode.None && !auth.AllowWithoutTls)
+        {
+            errors.Add("Security.Authentication: passwords are accepted only on an encrypted session, but inbound TLS is off, so nobody could sign in. " +
+                       "Turn on inbound TLS (Tls.Mode), or set Security.Authentication.AllowWithoutTls to true.");
+        }
+
         // Inbound TLS
         if (o.Tls.Mode != InboundTlsMode.None)
         {
@@ -146,14 +154,30 @@ public static partial class RelayOptionsValidator
     public static IReadOnlyList<string> Warnings(RelayOptions o)
     {
         var warnings = new List<string>();
+        var auth = o.Security.Authentication;
+        bool signInRequired = auth.Mode == InboundAuthMode.Required;
+        bool signInFromAnywhere = auth.Mode != InboundAuthMode.Disabled && auth.AllowFromAnyAddress;
+
         if (o.Security.AllowedIps.Count == 0)
         {
-            warnings.Add(o.Security.RejectWhenAllowListEmpty
-                ? "The IP allowlist is empty: every connection is refused."
-                : "The IP allowlist is empty and RejectWhenAllowListEmpty is off: the relay accepts mail from ANY address (open relay).");
+            if (o.Security.RejectWhenAllowListEmpty)
+            {
+                warnings.Add(signInFromAnywhere
+                    ? "The IP allowlist is empty: only users who sign in can send."
+                    : "The IP allowlist is empty: every connection is refused.");
+            }
+            else if (!signInRequired)
+            {
+                warnings.Add("The IP allowlist is empty and RejectWhenAllowListEmpty is off: the relay accepts mail from ANY address (open relay).");
+            }
         }
-        if (o.Security.AllowedIps.Any(e => e.Trim().EndsWith("/0", StringComparison.Ordinal)))
+        if (!signInRequired && o.Security.AllowedIps.Any(e => e.Trim().EndsWith("/0", StringComparison.Ordinal)))
             warnings.Add("The IP allowlist contains a /0 network: the relay accepts mail from any address (open relay).");
+
+        if (signInFromAnywhere)
+            warnings.Add("Users who sign in can connect from any address: the relay answers every computer that can reach its port, and anyone can try passwords.");
+        if (auth.Mode != InboundAuthMode.Disabled && auth.AllowWithoutTls && o.Tls.Mode != InboundTlsMode.StartTlsRequired)
+            warnings.Add("User names and passwords of the relay users may travel in clear text (Security.Authentication.AllowWithoutTls is on).");
 
         bool mayBeClearText = o.Upstream.Security is UpstreamSecureMode.None or UpstreamSecureMode.StartTlsWhenAvailable;
         if (o.Upstream.Mode != UpstreamAuthMode.Anonymous && mayBeClearText && o.Upstream.AllowInsecureAuthentication)

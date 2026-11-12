@@ -14,4 +14,7 @@ public sealed class SecurityOptions
     /// When false and the allowlist is empty, every connection is accepted (open relay: not recommended).
     /// </summary>
     public bool RejectWhenAllowListEmpty { get; set; } = true;
+
+    /// <summary>Sign-in of the clients with a user name and a password (off by default).</summary>
+    public InboundAuthenticationOptions Authentication { get; set; } = new();
 }

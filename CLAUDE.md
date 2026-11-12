@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project Overview
 
 NEXQ SMTP Relay: a Windows SMTP relay in C# / .NET 10, meant to replace the IIS 6 SMTP relay. It accepts mail from
-IP-allowlisted internal senders and forwards it to a smart host: Microsoft 365 or Azure Communication Services via
+IP-allowlisted internal senders (optionally signed in with the relay's own users) and forwards it to a smart host: Microsoft 365 or Azure Communication Services via
 OAuth2 client credentials (XOAUTH2, client secret or certificate), any SMTP server via Basic auth, or an anonymous
 connector. Windows-only (`net10.0-windows`, DPAPI,
 Windows service APIs, WPF). Source-available under PolyForm Shield 1.0.0; the repository is `NEXQsrl/SMTP-Relay`.
@@ -46,7 +46,8 @@ Three projects share one installation folder (the release publishes them self-co
 
 - **`src/SmtpRelay.Core`** (library, root namespace `SmtpRelay`): `Configuration/` (`RelayOptions` and friends,
   `ConfigLoader` load + atomic save, `RelayOptionsValidator` errors and warnings), `Security/` (`SecretStore`,
-  `SecretProtector`, `MachineKey`, `WindowsAcl`, `IpAllowList`, `LogSanitizer`, `CertificateFinder`), `Relay/`
+  `SecretProtector`, `MachineKey`, `WindowsAcl`, `IpAllowList`, `LogSanitizer`, `CertificateFinder`,
+  `RelayUserStore`), `Migration/` (`Iis6RelayList`, the import of the IIS 6 relay restrictions), `Relay/`
   (`UpstreamSender`, `EntraTokenProvider`), `Monitoring/` (`DeliveryCounters`, `AuditTrail`, `SnmpResponder`,
   `RelayMib`). Anything both executables need goes here.
 - **`src/SmtpRelay.Service`** (`SmtpRelay.exe`): dual-mode entry point. If `args[0]` is a CLI verb
@@ -62,12 +63,21 @@ Inbound message flow, wired in `SmtpRelayHostedService` on the `SmtpServer` libr
    unknown remote address, or above `MaxConcurrentSessions` are closed before the SMTP banner. After dropping a
    connection **both** `EndpointListener.RemoteEndPointKey` and `LocalEndPointKey` must be removed from the session
    context, or the library throws on the next accept and that connection hangs.
-2. `Smtp/RelayMailboxFilter.cs` enforces recipient and size limits and required STARTTLS.
+2. `Smtp/RelayMailboxFilter.cs` enforces recipient and size limits, required STARTTLS and the sign-in (530 when a
+   client that must sign in has not).
 3. `Smtp/RelayMessageStore.cs` hands the message to the sender, maps the outcome to the SMTP reply (250 / 451 /
    554), writes the audit line and spools failed messages as `.eml`. Unclassified exceptions are treated as
    transient so a defect never loses mail silently.
 4. `Relay/UpstreamSender.cs` delivers via MailKit with linear back-off. Transient vs permanent is signalled with
    `UpstreamDeliveryException`. Credentials are sent only when `client.IsSecure` (or `AllowInsecureAuthentication`).
+
+Inbound sign-in (`Security.Authentication`, off by default): `Smtp/RelayUserAuthenticator.cs` checks SMTP AUTH
+against `RelayUserStore` (`{DataDirectory}\users.json`, PBKDF2 hashes, reloaded when the file changes like the
+secret store) and sets `SessionKeys.User`, which is the only proof that a session signed in: when the mode is
+`Disabled` no authenticator is registered and the library's default one accepts anything, so never trust
+`context.Authentication`. With `AllowFromAnyAddress` the listener accepts addresses outside the allowlist and marks
+the session with `SessionKeys.MustAuthenticate`. Users are managed from the console (Allowed senders) and with the
+CLI verbs `set-user`, `remove-user`, `enable-user`, `disable-user`, `list-users`.
 
 Upstream authentication: `UpstreamOptions.Mode` selects Basic, Anonymous, Microsoft365 or
 AzureCommunicationServices. The two Microsoft modes share `EntraApplicationOptions` (tenant, client, `Credential` =
@@ -114,6 +124,10 @@ the console.
   `ServiceStartupFailure.ReportAsync` when running as a service (it logs, runs a minimal host, then stops).
 - Folder names never contain the company name: the program is in `{autopf}\SMTP Relay`, the data in
   `C:\ProgramData\SmtpRelay`. `installer/SmtpRelay.iss` moves a 2.0.0 installation out of `{autopf}\NEXQ\SMTP Relay`.
+- The audit line is `DELIVERED|FAILED client=<ip> user=<relay user or -> from=...`. `AuditTrail` and the console
+  only look at the marker, but administrators parse these lines: do not reorder the fields.
+- `Iis6RelayList` decodes the binary `RelayIpList` of the IIS metabase from its known layout; it has never been run
+  against a real IIS installation. It must keep refusing data it does not understand instead of guessing.
 - `appsettings.json` is installed with `onlyifdoesntexist uninsneveruninstall`: new settings must have sensible
   defaults in the options classes, because existing installations keep their old file.
 - The tests (`tests/SmtpRelay.Tests`) run the real listener against a fake smart host on loopback; SMTP-path

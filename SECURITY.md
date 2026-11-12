@@ -55,9 +55,19 @@ SMTP Relay **has not had an independent security review**. Do not expose the lis
 - The default is **fail-closed**: an empty list refuses everyone. Accepting everyone needs two explicit choices
   (`RejectWhenAllowListEmpty = false` with an empty list, or a `/0` network), and both are flagged as *open relay* in
   the console, in `show-config` and in the log.
-- Clients are **not authenticated with a password**: SMTP AUTH is not offered. Anyone who can send from an allowed
-  address can relay mail, as with the IIS SMTP relay. Keep the allowlist narrow, and use single addresses rather than
-  whole networks where you can.
+- By default clients are **not authenticated with a password**: anyone who can send from an allowed address can
+  relay mail, as with the IIS SMTP relay. Keep the allowlist narrow, and use single addresses rather than whole
+  networks where you can.
+- **Sign-in (SMTP AUTH PLAIN / LOGIN) is optional and off by default.** The users belong to the relay; they are not
+  Windows accounts. Each password is kept as a salted PBKDF2-SHA256 hash (200,000 iterations) in `users.json` in the
+  data folder, never in clear text and never in the logs. A password is accepted only on a session encrypted with
+  STARTTLS, unless you turn on `AllowWithoutTls`: then user names and passwords travel in clear text, and the
+  console, `show-config` and the log say so.
+- With `AllowFromAnyAddress` the allowlist no longer hides the relay: every computer that reaches the port gets
+  the SMTP greeting and can try passwords. Guessing is slowed down (one second per wrong password, three attempts
+  per connection, ten failures in ten minutes block the address for the rest of that time) but not made
+  impossible: use long random passwords and keep the port off the Internet. The block is per address, so a device
+  with a wrong password can lock out other devices behind the same address.
 - Limits on message size, recipients, concurrent sessions and idle time bound what one client can consume. Messages
   are held in memory while they are forwarded: size the limits to the memory of the server.
 

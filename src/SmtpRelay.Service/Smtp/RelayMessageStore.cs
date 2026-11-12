@@ -19,7 +19,7 @@ namespace SmtpRelay.Smtp;
 
 /// <summary>
 /// Receives the message (DATA command) and forwards it to the smart host. The outcome goes to the audit
-/// trail; on a transient error the client gets 451 and is expected to try again.
+/// trail, with the address of the client and the relay user that signed in; on a transient error the client gets 451 and is expected to try again.
 /// </summary>
 public sealed class RelayMessageStore : MessageStore
 {
@@ -57,6 +57,7 @@ public sealed class RelayMessageStore : MessageStore
     {
         var stopwatch = Stopwatch.StartNew();
         var clientIp = GetRemoteAddress(context);
+        var user = SessionKeys.GetUser(context) ?? "-"; // "-" when the client did not sign in
         var envelopeFrom = ToAddress(transaction.From);
         var recipients = transaction.To.Select(ToAddress).Where(a => a.Length > 0).ToList();
         var from = envelopeFrom.Length == 0 ? "<>" : LogSanitizer.Clean(envelopeFrom);
@@ -79,8 +80,8 @@ public sealed class RelayMessageStore : MessageStore
             _logger.LogError(ex, "Cannot parse the message received from {ClientIp}.", clientIp);
             _counters.RecordFailed();
             _audit.LogWarning(
-                "FAILED client={ClientIp} from={From} to={To} size={Size} permanent={Permanent} reason={Reason}",
-                clientIp, from, to, sizeBytes, true, "message cannot be parsed");
+                "FAILED client={ClientIp} user={User} from={From} to={To} size={Size} permanent={Permanent} reason={Reason}",
+                clientIp, user, from, to, sizeBytes, true, "message cannot be parsed");
             return new SmtpResponse(SmtpReplyCode.TransactionFailed, "5.6.0 Message cannot be parsed");
         }
 
@@ -94,8 +95,8 @@ public sealed class RelayMessageStore : MessageStore
 
                 _counters.RecordDelivered();
                 _audit.LogInformation(
-                    "DELIVERED client={ClientIp} from={From} to={To} size={Size} subject={Subject} durationMs={Duration}",
-                    clientIp, from, to, sizeBytes, subject, stopwatch.ElapsedMilliseconds);
+                    "DELIVERED client={ClientIp} user={User} from={From} to={To} size={Size} subject={Subject} durationMs={Duration}",
+                    clientIp, user, from, to, sizeBytes, subject, stopwatch.ElapsedMilliseconds);
 
                 return SmtpResponse.Ok;
             }
@@ -103,8 +104,8 @@ public sealed class RelayMessageStore : MessageStore
             {
                 _counters.RecordFailed();
                 _audit.LogWarning(
-                    "FAILED client={ClientIp} from={From} to={To} size={Size} subject={Subject} permanent={Permanent} reason={Reason}",
-                    clientIp, from, to, sizeBytes, subject, false, "service shutting down");
+                    "FAILED client={ClientIp} user={User} from={From} to={To} size={Size} subject={Subject} permanent={Permanent} reason={Reason}",
+                    clientIp, user, from, to, sizeBytes, subject, false, "service shutting down");
                 return new SmtpResponse((SmtpReplyCode)451, "4.3.0 Service shutting down, try again later");
             }
             catch (Exception ex)
@@ -116,8 +117,8 @@ public sealed class RelayMessageStore : MessageStore
 
                 _counters.RecordFailed();
                 _audit.LogWarning(
-                    "FAILED client={ClientIp} from={From} to={To} size={Size} subject={Subject} permanent={Permanent} reason={Reason}",
-                    clientIp, from, to, sizeBytes, subject, permanent, LogSanitizer.Clean(ex.Message, 512));
+                    "FAILED client={ClientIp} user={User} from={From} to={To} size={Size} subject={Subject} permanent={Permanent} reason={Reason}",
+                    clientIp, user, from, to, sizeBytes, subject, permanent, LogSanitizer.Clean(ex.Message, 512));
 
                 _logger.LogError(ex, "Delivery to the smart host failed (permanent={Permanent}).", permanent);
 

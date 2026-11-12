@@ -23,6 +23,7 @@ public sealed class RelayOptions
     public SnmpOptions Snmp { get; set; } = new();
 
     [JsonIgnore] public string SecretsFilePath => Path.Combine(DataDirectory, "secrets.dat");
+    [JsonIgnore] public string UsersFilePath => Path.Combine(DataDirectory, "users.json");
     [JsonIgnore] public string EntropyFilePath => Path.Combine(DataDirectory, "entropy.bin");
     [JsonIgnore] public string UpdatesDirectory => Path.Combine(DataDirectory, "updates");
 

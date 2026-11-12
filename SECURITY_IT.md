@@ -57,9 +57,19 @@ SMTP Relay **non ha avuto una revisione di sicurezza indipendente**. Non esporre
 - L'impostazione predefinita è **fail-closed**: con l'elenco vuoto tutti sono rifiutati. Accettare tutti richiede
   due scelte esplicite (`RejectWhenAllowListEmpty = false` con l'elenco vuoto, oppure una rete `/0`), ed entrambe
   sono segnalate come *open relay* nella console, in `show-config` e nel log.
-- I client **non si autenticano con una password**: SMTP AUTH non viene offerto. Chiunque possa inviare da un
+- Per impostazione predefinita i client **non si autenticano con una password**: chiunque possa inviare da un
   indirizzo consentito può usare il relay, come con il relay SMTP di IIS. Tieni l'elenco stretto e, dove puoi, usa
   indirizzi singoli invece di reti intere.
+- **L'accesso (SMTP AUTH PLAIN / LOGIN) è facoltativo e disattivato per impostazione predefinita.** Gli utenti
+  appartengono al relay; non sono account di Windows. Ogni password è conservata come hash PBKDF2-SHA256 con salt
+  (200.000 iterazioni) in `users.json` nella cartella dati, mai in chiaro e mai nei log. Una password è accettata
+  solo su una sessione cifrata con STARTTLS, a meno che tu non attivi `AllowWithoutTls`: in quel caso nomi utente e
+  password viaggiano in chiaro, e la console, `show-config` e il log lo segnalano.
+- Con `AllowFromAnyAddress` l'elenco non nasconde più il relay: ogni computer che raggiunge la porta riceve il
+  saluto SMTP e può provare delle password. I tentativi sono rallentati (un secondo per ogni password sbagliata,
+  tre tentativi per connessione, dieci errori in dieci minuti bloccano l'indirizzo per il resto di quel periodo)
+  ma non resi impossibili: usa password lunghe e casuali e non esporre la porta a Internet. Il blocco è per
+  indirizzo, quindi un apparato con la password sbagliata può bloccare gli altri apparati dietro lo stesso indirizzo.
 - I limiti su dimensione dei messaggi, destinatari, sessioni contemporanee e inattività delimitano ciò che un
   client può consumare. I messaggi restano in memoria mentre vengono inoltrati: dimensiona i limiti sulla memoria
   del server.

@@ -30,6 +30,7 @@ public sealed class SmtpRelayHostedService : BackgroundService
     private readonly DeliveryCounters _counters;
 
     private X509Certificate2? _certificate;
+    private RelayUserStore? _users;
 
     public SmtpRelayHostedService(
         RelayOptions options,
@@ -57,6 +58,18 @@ public sealed class SmtpRelayHostedService : BackgroundService
         try
         {
             _certificate = CertificateLoader.Load(_options.Tls, _secrets, _logger);
+
+            var auth = _options.Security.Authentication;
+            if (auth.Mode != InboundAuthMode.Disabled)
+            {
+                _users = RelayUserStore.Open(_options);
+                int userCount = _users.Count;
+                _logger.LogInformation(
+                    "Sign-in of the clients: {Mode}, {Users} user(s), from any address: {AnyAddress}, without TLS: {WithoutTls}.",
+                    auth.Mode, userCount, auth.AllowFromAnyAddress, AllowSignInWithoutTls);
+                if (userCount == 0)
+                    _logger.LogWarning("Sign-in of the clients is on but no user exists yet: nobody can sign in. Create the users in the console (Allowed senders) or with 'SmtpRelay set-user'.");
+            }
 
             var server = new SmtpServer.SmtpServer(BuildServerOptions(), BuildComponents());
             server.SessionCreated += (_, e) => _logger.LogDebug("Session started {SessionId}.", e.Context.SessionId);
@@ -111,6 +124,7 @@ public sealed class SmtpRelayHostedService : BackgroundService
     {
         var builder = new SmtpServerOptionsBuilder()
             .ServerName(_options.Listener.ServerName)
+            .MaxAuthenticationAttempts(3)
             .CommandWaitTimeout(TimeSpan.FromSeconds(_options.Listener.CommandTimeoutSeconds))
             .MaxMessageSize((int)Math.Min(_options.Listener.MaxMessageSizeBytes, int.MaxValue))
             .Endpoint(endpoint =>
@@ -118,7 +132,7 @@ public sealed class SmtpRelayHostedService : BackgroundService
                 endpoint
                     .Endpoint(new IPEndPoint(IPAddress.Parse(_options.Listener.IpAddress), _options.Listener.Port))
                     .IsSecure(false)
-                    .AllowUnsecureAuthentication(false)
+                    .AllowUnsecureAuthentication(AllowSignInWithoutTls)
                     .SupportedSslProtocols(ResolveSslProtocols());
 
                 if (_certificate is not null)
@@ -141,11 +155,23 @@ public sealed class SmtpRelayHostedService : BackgroundService
             componentLogger,
             auditLogger,
             _counters));
-        serviceProvider.Add(new RelayMailboxFilter(_options.Listener, _options.Tls.Mode, componentLogger));
-        serviceProvider.Add(new AllowListEndpointListenerFactory(new EndpointListenerFactory(), _allowList, _limiter, componentLogger));
+        var auth = _options.Security.Authentication;
+        serviceProvider.Add(new RelayMailboxFilter(_options.Listener, _options.Tls.Mode, componentLogger, auth.Mode));
+        serviceProvider.Add(new AllowListEndpointListenerFactory(
+            new EndpointListenerFactory(), _allowList, _limiter, componentLogger,
+            acceptAnyAddress: auth.Mode != InboundAuthMode.Disabled && auth.AllowFromAnyAddress));
+
+        // Without sign-in nothing is registered and the behaviour of the previous versions is kept.
+        if (_users is not null)
+            serviceProvider.Add(new RelayUserAuthenticator(_users, componentLogger));
 
         return serviceProvider;
     }
+
+    // A password in clear text is accepted only when the administrator asked for it, and never when TLS is required.
+    private bool AllowSignInWithoutTls
+        => _options.Security.Authentication is { Mode: not InboundAuthMode.Disabled, AllowWithoutTls: true } &&
+           _options.Tls.Mode != InboundTlsMode.StartTlsRequired;
 
     private SslProtocols ResolveSslProtocols()
         => string.Equals(_options.Tls.MinimumProtocol, "Tls13", StringComparison.OrdinalIgnoreCase)

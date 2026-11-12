@@ -17,17 +17,23 @@ public sealed class AllowListEndpointListenerFactory : IEndpointListenerFactory
     private readonly IpAllowList _allowList;
     private readonly SessionLimiter _limiter;
     private readonly ILogger _logger;
+    private readonly bool _acceptAnyAddress;
 
-    public AllowListEndpointListenerFactory(IEndpointListenerFactory inner, IpAllowList allowList, SessionLimiter limiter, ILogger logger)
+    /// <param name="acceptAnyAddress">
+    /// True when users who sign in may connect from any address: a connection from outside the allowlist is
+    /// then accepted, and marked so that it cannot send before signing in.
+    /// </param>
+    public AllowListEndpointListenerFactory(IEndpointListenerFactory inner, IpAllowList allowList, SessionLimiter limiter, ILogger logger, bool acceptAnyAddress = false)
     {
         _inner = inner;
         _allowList = allowList;
         _limiter = limiter;
         _logger = logger;
+        _acceptAnyAddress = acceptAnyAddress;
     }
 
     public IEndpointListener CreateListener(IEndpointDefinition endpointDefinition)
-        => new AllowListEndpointListener(_inner.CreateListener(endpointDefinition), _allowList, _limiter, _logger);
+        => new AllowListEndpointListener(_inner.CreateListener(endpointDefinition), _allowList, _limiter, _logger, _acceptAnyAddress);
 }
 
 /// <summary>
@@ -40,14 +46,16 @@ public sealed class AllowListEndpointListener : IEndpointListener
     private readonly IpAllowList _allowList;
     private readonly SessionLimiter _limiter;
     private readonly ILogger _logger;
+    private readonly bool _acceptAnyAddress;
     private readonly ThrottledLog _refusedLog = new(TimeSpan.FromMinutes(1));
 
-    public AllowListEndpointListener(IEndpointListener inner, IpAllowList allowList, SessionLimiter limiter, ILogger logger)
+    public AllowListEndpointListener(IEndpointListener inner, IpAllowList allowList, SessionLimiter limiter, ILogger logger, bool acceptAnyAddress = false)
     {
         _inner = inner;
         _allowList = allowList;
         _limiter = limiter;
         _logger = logger;
+        _acceptAnyAddress = acceptAnyAddress;
     }
 
     public async Task<ISecurableDuplexPipe> GetPipeAsync(ISessionContext context, CancellationToken cancellationToken)
@@ -58,7 +66,8 @@ public sealed class AllowListEndpointListener : IEndpointListener
             var remote = GetRemoteEndPoint(context);
 
             // Fail closed: a connection whose address is unknown is refused like one that is not allowed.
-            if (remote is null || !_allowList.IsAllowed(remote.Address))
+            bool listed = remote is not null && _allowList.IsAllowed(remote.Address);
+            if (remote is null || (!listed && !_acceptAnyAddress))
             {
                 var key = remote?.Address.ToString() ?? "unknown";
                 if (_refusedLog.ShouldLog(key, out var suppressed))
@@ -79,7 +88,12 @@ public sealed class AllowListEndpointListener : IEndpointListener
             }
             else
             {
-                _logger.LogDebug("Connection accepted from {RemoteIp}:{RemotePort}", remote.Address, remote.Port);
+                if (listed)
+                    context.Properties.Remove(SessionKeys.MustAuthenticate);
+                else
+                    context.Properties[SessionKeys.MustAuthenticate] = true;
+
+                _logger.LogDebug("Connection accepted from {RemoteIp}:{RemotePort} (in the allowlist: {Listed})", remote.Address, remote.Port, listed);
                 return pipe;
             }
 

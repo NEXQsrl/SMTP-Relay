@@ -328,7 +328,11 @@
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
                                     <TextBox x:Name="NewIpBox" KeyDown="NewIpBox_KeyDown" />
-                                    <Button Grid.Column="1" Content="Add" Style="{StaticResource PrimaryButton}" Margin="10,0,0,0" Click="AddIp_Click" />
+                                    <StackPanel Grid.Column="1" Orientation="Horizontal">
+                                        <Button Content="Add" Style="{StaticResource PrimaryButton}" Margin="10,0,0,0" Click="AddIp_Click" />
+                                        <Button Content="Import from IIS 6…" Style="{StaticResource SecondaryButton}" Margin="8,0,0,0" Click="ImportIis_Click"
+                                                ToolTip="Copies the computers of the Relay restrictions of the IIS 6 SMTP service installed on this computer." />
+                                    </StackPanel>
                                 </Grid>
                                 <TextBlock x:Name="NewIpError" Foreground="{StaticResource Danger}" FontSize="12" Margin="0,6,0,0" Visibility="Collapsed" />
 
@@ -356,6 +360,110 @@
                                         </ItemsControl>
                                     </Grid>
                                 </Border>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource CardBorder}">
+                            <StackPanel>
+                                <TextBlock Text="Sign-in with user name and password" Style="{StaticResource H2}" />
+                                <TextBlock Style="{StaticResource Sub}" Margin="0,0,0,12"
+                                           Text="Devices and applications can sign in to the relay with SMTP authentication (AUTH PLAIN or LOGIN). The users are created here and belong to the relay only: they are not Windows accounts, and they are not the account the relay uses on the smart host." />
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="12" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="12" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <RadioButton Style="{StaticResource Choice}" GroupName="SignIn" IsChecked="{Binding IsSignInOff}">
+                                        <StackPanel>
+                                            <TextBlock Text="Off" FontWeight="SemiBold" />
+                                            <TextBlock Style="{StaticResource Hint}" Margin="0,3,0,0" Text="Nobody signs in: the IP allowlist alone decides who may send." />
+                                        </StackPanel>
+                                    </RadioButton>
+                                    <RadioButton Grid.Column="2" Style="{StaticResource Choice}" GroupName="SignIn" IsChecked="{Binding IsSignInOptional}">
+                                        <StackPanel>
+                                            <TextBlock Text="Optional" FontWeight="SemiBold" />
+                                            <TextBlock Style="{StaticResource Hint}" Margin="0,3,0,0" Text="Clients may sign in. Addresses of the allowlist can still send without a password." />
+                                        </StackPanel>
+                                    </RadioButton>
+                                    <RadioButton Grid.Column="4" Style="{StaticResource Choice}" GroupName="SignIn" IsChecked="{Binding IsSignInRequired}">
+                                        <StackPanel>
+                                            <TextBlock Text="Required" FontWeight="SemiBold" />
+                                            <TextBlock Style="{StaticResource Hint}" Margin="0,3,0,0" Text="Every client must sign in before it can send, also from the allowlist." />
+                                        </StackPanel>
+                                    </RadioButton>
+                                </Grid>
+
+                                <StackPanel Visibility="{Binding SignInEnabled, Converter={StaticResource Vis}}">
+                                    <CheckBox Style="{StaticResource Switch}" Margin="0,18,0,0"
+                                              IsChecked="{Binding Options.Security.Authentication.AllowFromAnyAddress}" Content="Users who sign in can connect from any address" />
+                                    <TextBlock Style="{StaticResource Hint}" Margin="50,6,0,0"
+                                               Text="Off: the allowlist applies to everyone, signed in or not. On: computers outside the allowlist can connect, and can send only after signing in; the relay then answers anyone who reaches its port." />
+                                    <CheckBox Style="{StaticResource Switch}" Margin="0,14,0,0"
+                                              IsChecked="{Binding Options.Security.Authentication.AllowWithoutTls}" Content="Accept passwords on connections that are not encrypted" />
+                                    <TextBlock Style="{StaticResource Hint}" Margin="50,6,0,0" Text="{Binding SignInTlsNote}" />
+                                    <TextBlock Style="{StaticResource Hint}" Margin="0,14,0,0"
+                                               Text="These three settings need a restart of the service. After ten wrong passwords in ten minutes an address is refused for the rest of that time." />
+                                </StackPanel>
+
+                                <TextBlock Text="Users" Style="{StaticResource Label}" Margin="0,20,0,6" />
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="10" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBox x:Name="NewUserBox" KeyDown="NewUser_KeyDown" />
+                                        <TextBlock Style="{StaticResource Hint}" Text="User name, for example scanner or erp@contoso.com." />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2">
+                                        <PasswordBox x:Name="NewUserPasswordBox" KeyDown="NewUser_KeyDown" />
+                                        <TextBlock Style="{StaticResource Hint}" Text="Password, at least 8 characters." />
+                                    </StackPanel>
+                                    <Button Grid.Column="3" Content="Add user" Style="{StaticResource PrimaryButton}" Margin="10,0,0,0" VerticalAlignment="Top" Click="AddUser_Click" />
+                                </Grid>
+                                <TextBlock x:Name="NewUserError" Foreground="{StaticResource Danger}" FontSize="12" Margin="0,6,0,0" Visibility="Collapsed" TextWrapping="Wrap" />
+
+                                <Border BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="8" Margin="0,14,0,0" MinHeight="48">
+                                    <Grid>
+                                        <TextBlock Text="No user yet." Foreground="{StaticResource TextMuted}" Margin="14" x:Name="EmptyUserText" />
+                                        <ItemsControl ItemsSource="{Binding Users}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Border BorderBrush="{StaticResource Line}" BorderThickness="0,0,0,1" Padding="14,0">
+                                                        <Grid Height="40">
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="Auto" />
+                                                                <ColumnDefinition Width="*" />
+                                                                <ColumnDefinition Width="Auto" />
+                                                                <ColumnDefinition Width="Auto" />
+                                                                <ColumnDefinition Width="Auto" />
+                                                                <ColumnDefinition Width="Auto" />
+                                                            </Grid.ColumnDefinitions>
+                                                            <TextBlock Text="&#xE77B;" Style="{StaticResource Icon}" Margin="0,0,12,0"
+                                                                       Foreground="{Binding StateKind, Converter={StaticResource Kind}}" />
+                                                            <TextBlock Grid.Column="1" Text="{Binding Name}" FontFamily="{StaticResource Mono}" FontSize="13" VerticalAlignment="Center" />
+                                                            <TextBlock Grid.Column="2" Text="{Binding StateText}" FontSize="12" VerticalAlignment="Center" Margin="0,0,18,0"
+                                                                       Foreground="{Binding StateKind, Converter={StaticResource Kind}}" />
+                                                            <Button Grid.Column="3" Content="Change password" Style="{StaticResource LinkButton}"
+                                                                    VerticalAlignment="Center" Margin="0,0,16,0" Click="ChangeUserPassword_Click" Tag="{Binding Name}" />
+                                                            <Button Grid.Column="4" Content="{Binding ToggleText}" Style="{StaticResource LinkButton}"
+                                                                    VerticalAlignment="Center" Margin="0,0,16,0" Click="ToggleUser_Click" Tag="{Binding}" />
+                                                            <Button Grid.Column="5" Content="Remove" Style="{StaticResource LinkButton}" Foreground="{StaticResource Danger}"
+                                                                    VerticalAlignment="Center" Click="RemoveUser_Click" Tag="{Binding Name}" />
+                                                        </Grid>
+                                                    </Border>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </Grid>
+                                </Border>
+                                <TextBlock Style="{StaticResource Hint}" Margin="0,8,0,0"
+                                           Text="Users are saved at once and reach the running service without a restart. Only a salted hash of each password is kept: a forgotten password cannot be read back, only changed." />
                             </StackPanel>
                         </Border>
 

@@ -27,6 +27,8 @@ public partial class MainWindow : Window
         UpdateEmptyIpText();
         _vm.SnmpManagers.CollectionChanged += (_, _) => UpdateEmptyManagerText();
         UpdateEmptyManagerText();
+        _vm.Users.CollectionChanged += (_, _) => UpdateEmptyUserText();
+        UpdateEmptyUserText();
 
         // While the administrator types, keep the validation and the "unsaved changes" state current.
         _editTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
@@ -70,12 +72,17 @@ public partial class MainWindow : Window
         _vm.RefreshService();
         if (_vm.Page == "Overview")
             _vm.RefreshStats();
+        if (_vm.Page == "Access")
+            _vm.RefreshUsers(); // a user may have been changed with the command line
         if (_vm.Page == "Logs" && _vm.AutoRefreshLogs)
             _vm.RefreshLogFiles();
     }
 
     private void UpdateEmptyIpText()
         => EmptyIpText.Visibility = _vm.AllowedIps.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+
+    private void UpdateEmptyUserText()
+        => EmptyUserText.Visibility = _vm.Users.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
 
     private void UpdateEmptyManagerText()
         => EmptyManagerText.Visibility = _vm.SnmpManagers.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -204,6 +211,142 @@ public partial class MainWindow : Window
     {
         if (sender is Button { Tag: string entry })
             _vm.RemoveAllowedIp(entry);
+    }
+
+    private void ImportIis_Click(object sender, RoutedEventArgs e)
+    {
+        SmtpRelay.Migration.Iis6RelayImport? import;
+        try
+        {
+            import = MainViewModel.ReadIis6RelayList();
+        }
+        catch (Exception ex)
+        {
+            ShowError("The relay list of IIS could not be read:\n" + ex.Message);
+            return;
+        }
+
+        if (import is null)
+        {
+            ShowInfo("The IIS 6 SMTP service was not found on this computer.\n\n" +
+                     "Open this console on the server where the IIS SMTP virtual server is installed, or type the addresses by hand.");
+            return;
+        }
+
+        var notes = "";
+        if (import.SkippedNames > 0)
+            notes += $"\n\n{import.SkippedNames} entr{(import.SkippedNames == 1 ? "y is a domain name" : "ies are domain names")} and cannot be imported: the allowlist takes IP addresses only.";
+
+        if (import.Entries.Count == 0)
+        {
+            ShowInfo((import.AllExceptList
+                         ? "In IIS the relay restrictions are set to \"All except the list below\": there is no list of allowed computers to import."
+                         : "In IIS the list of computers that may relay is empty: there is nothing to import.") + notes);
+            return;
+        }
+
+        var fresh = import.Entries.Where(entry => !_vm.AllowedIps.Contains(entry, StringComparer.OrdinalIgnoreCase)).ToList();
+        if (fresh.Count == 0)
+        {
+            ShowInfo($"All the {import.Entries.Count} computers allowed to relay in IIS are already in the list." + notes);
+            return;
+        }
+
+        var shown = string.Join("\n", fresh.Take(20).Select(entry => "    " + entry));
+        if (fresh.Count > 20)
+            shown += $"\n    … and {fresh.Count - 20} more";
+        var answer = MessageBox.Show(this,
+            $"IIS allows {import.Entries.Count} computer{(import.Entries.Count == 1 ? "" : "s")} or network{(import.Entries.Count == 1 ? "" : "s")} to relay; " +
+            $"{fresh.Count} {(fresh.Count == 1 ? "is" : "are")} not in the list yet:\n\n{shown}\n\nAdd {(fresh.Count == 1 ? "it" : "them")} to the allowlist?" + notes,
+            Title, MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.Yes);
+        if (answer != MessageBoxResult.Yes)
+            return;
+
+        int added = _vm.ImportAllowedIps(fresh, import.Source);
+        ShowInfo($"{added} entr{(added == 1 ? "y" : "ies")} added. Nothing in IIS was changed.\n\nSave the settings and restart the service to apply them.");
+    }
+
+    // ----- users of the relay ----------------------------------------------------------------------------
+
+    private void AddUser_Click(object sender, RoutedEventArgs e) => AddUser();
+
+    private void NewUser_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter)
+        {
+            AddUser();
+            e.Handled = true;
+        }
+    }
+
+    private void AddUser()
+    {
+        var error = _vm.AddUser(NewUserBox.Text, NewUserPasswordBox.Password);
+        NewUserError.Text = error ?? "";
+        NewUserError.Visibility = error is null ? Visibility.Collapsed : Visibility.Visible;
+        if (error is null)
+        {
+            NewUserBox.Clear();
+            NewUserPasswordBox.Clear();
+            NewUserBox.Focus();
+        }
+    }
+
+    private void ChangeUserPassword_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: string name })
+            return;
+
+        var dialog = new PasswordDialog(this, "Change password",
+            $"New password of the user '{name}'. Devices that sign in with the old one stop sending until you update them.",
+            SmtpRelay.Security.RelayUserStore.DescribePasswordProblem);
+        if (dialog.ShowDialog() != true)
+            return;
+
+        try
+        {
+            _vm.ChangeUserPassword(name, dialog.Password);
+        }
+        catch (Exception ex)
+        {
+            ShowError("The password was not changed:\n" + ex.Message);
+        }
+    }
+
+    private void ToggleUser_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: RelayUserRow user })
+            return;
+
+        try
+        {
+            _vm.SetUserEnabled(user.Name, !user.Enabled);
+        }
+        catch (Exception ex)
+        {
+            ShowError("The user was not changed:\n" + ex.Message);
+        }
+    }
+
+    private void RemoveUser_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: string name })
+            return;
+
+        var answer = MessageBox.Show(this,
+            $"Remove the user '{name}'? Devices that sign in with it will no longer be able to send.",
+            Title, MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
+        if (answer != MessageBoxResult.Yes)
+            return;
+
+        try
+        {
+            _vm.RemoveUser(name);
+        }
+        catch (Exception ex)
+        {
+            ShowError("The user was not removed:\n" + ex.Message);
+        }
     }
 
     // ----- secrets ---------------------------------------------------------------------------------------
