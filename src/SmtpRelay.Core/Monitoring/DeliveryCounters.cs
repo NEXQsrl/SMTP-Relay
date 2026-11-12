@@ -76,8 +76,8 @@ public sealed class DeliveryCounters
 /// <summary>Reads the delivery events of the audit trail (audit-yyyyMMdd.log) without locking the files.</summary>
 public static class AuditTrail
 {
-    private const string DeliveredMarker = ": DELIVERED ";
-    private const string FailedMarker = ": FAILED ";
+    private const string DeliveredEvent = "DELIVERED ";
+    private const string FailedEvent = "FAILED ";
 
     /// <summary>Counts today's delivered and failed messages and returns the latest failures, newest first.</summary>
     public static (int Delivered, int Failed, IReadOnlyList<string> RecentFailures) ReadToday(string directory, int maxFailures = 5)
@@ -120,19 +120,37 @@ public static class AuditTrail
     }
 
     /// <summary>
-    /// True for a delivery, false for a failure, null for anything else. The event name is the first thing
-    /// after the logger name, so a subject that contains one of the words cannot change the outcome.
+    /// True for a delivery, false for a failure, null for anything else. An audit line is
+    /// "yyyy-MM-dd HH:mm:ss.fff +zz:zz EVENT client=...": the event is read at its fixed place, right after
+    /// the time stamp, so a subject that contains one of the words cannot change the outcome.
     /// </summary>
     internal static bool? Classify(string line)
     {
-        int delivered = line.IndexOf(DeliveredMarker, StringComparison.Ordinal);
-        int failed = line.IndexOf(FailedMarker, StringComparison.Ordinal);
-        if (delivered < 0 && failed < 0)
-            return null;
-        if (failed < 0)
+        // Skip the three parts of the time stamp: date, time, offset.
+        int start = 0;
+        for (int i = 0; i < 3; i++)
+        {
+            start = line.IndexOf(' ', start);
+            if (start < 0)
+                return null;
+            start++;
+        }
+
+        var rest = line.AsSpan(start);
+
+        // The same event as the application log writes it: "[INF] SmtpRelay.Audit: EVENT ...".
+        if (rest.StartsWith("[", StringComparison.Ordinal))
+        {
+            int colon = rest.IndexOf(": ", StringComparison.Ordinal);
+            if (colon < 0)
+                return null;
+            rest = rest[(colon + 2)..];
+        }
+
+        if (rest.StartsWith(DeliveredEvent, StringComparison.Ordinal))
             return true;
-        if (delivered < 0)
+        if (rest.StartsWith(FailedEvent, StringComparison.Ordinal))
             return false;
-        return delivered < failed;
+        return null;
     }
 }

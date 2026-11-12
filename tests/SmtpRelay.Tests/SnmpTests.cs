@@ -274,20 +274,54 @@ public class DeliveryCountersTests
         var dir = Directory.CreateTempSubdirectory("smtprelay-audit-").FullName;
         try
         {
-            const string prefix = "2026-11-12 10:00:00.000 +01:00 [INF] SmtpRelay.Audit: ";
+            // The layout of the audit file: time stamp, then the event.
+            const string prefix = "2026-11-12 10:00:00.000 +01:00 ";
             File.WriteAllLines(Path.Combine(dir, $"audit-{DateTime.Now:yyyyMMdd}.log"), new[]
             {
                 prefix + "DELIVERED client=10.0.0.1 from=a@x.example to=b@y.example size=10 subject=Hello durationMs=5",
                 prefix + "DELIVERED client=10.0.0.1 from=a@x.example to=b@y.example size=10 subject=Report: FAILED jobs durationMs=5",
                 prefix + "FAILED client=10.0.0.1 from=a@x.example to=b@y.example size=10 subject=Was: DELIVERED yesterday permanent=False reason=4.4.1",
-                "2026-11-12 10:00:00.000 +01:00 [INF] SmtpRelay.Smtp: something else"
+                "2026-11-12 10:00:00.000 +01:00 [INF] SmtpRelay.Smtp: something else",
+                "2026-11-12 10:00:00.000 +01:00 [INF] SmtpRelay.Smtp: Sign-in FAILED for user 'x' from 10.0.0.1",
+                "2026-11-12 10:00:00.000 +01:00 [INF] SmtpRelay.Audit: DELIVERED client=10.0.0.3 user=- from=a@x.example to=b@y.example size=10 subject=As the application log writes it durationMs=5",
+                "not a log line"
             });
             // Rotated by size: the second file of the day counts too. Yesterday's does not.
             File.WriteAllLines(Path.Combine(dir, $"audit-{DateTime.Now:yyyyMMdd}_001.log"), new[] { prefix + "DELIVERED client=10.0.0.2 from=a@x.example to=b@y.example size=1 subject=x durationMs=1" });
             File.WriteAllLines(Path.Combine(dir, $"audit-{DateTime.Now.AddDays(-1):yyyyMMdd}.log"), new[] { prefix + "FAILED client=10.0.0.2 from=a@x.example to=b@y.example size=1 subject=x permanent=True reason=old" });
 
-            Assert.Equal((3, 1), DeliveryCounters.FromAuditTrail(dir).Today);
+            Assert.Equal((4, 1), DeliveryCounters.FromAuditTrail(dir).Today);
             Assert.Equal((0, 0), DeliveryCounters.FromAuditTrail(Path.Combine(dir, "missing")).Today);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void TheAuditFileTheServiceWritesIsCountedByTheConsole()
+    {
+        // The real logger writes the file and the real reader counts it: the two must agree on the layout.
+        var dir = Directory.CreateTempSubdirectory("smtprelay-auditfile-").FullName;
+        try
+        {
+            var options = new RelayOptions { DataDirectory = dir };
+            using (var logger = LoggingSetup.CreateLogger(options, runningAsService: false))
+            {
+                var audit = logger.ForContext(Serilog.Core.Constants.SourceContextPropertyName, LoggingSetup.AuditSourceContext);
+                audit.Information("DELIVERED client={ClientIp} user={User} from={From} to={To} size={Size} subject={Subject} durationMs={Duration}",
+                    "192.168.1.63", "-", "donotreply@contoso.com", "a@example.org", 264, "Report: FAILED jobs", 1205);
+                audit.Information("DELIVERED client={ClientIp} user={User} from={From} to={To} size={Size} subject={Subject} durationMs={Duration}",
+                    "192.168.1.63", "scanner", "scanner@contoso.com", "a@example.org", 9000, "Scan", 800);
+                audit.Warning("FAILED client={ClientIp} user={User} from={From} to={To} size={Size} subject={Subject} permanent={Permanent} reason={Reason}",
+                    "192.168.1.63", "-", "erp@contoso.com", "a@example.org", 10, "Was DELIVERED yesterday", false, "4.4.1 Smart host not available");
+                logger.ForContext(Serilog.Core.Constants.SourceContextPropertyName, "SmtpRelay.Smtp").Warning("Connection REFUSED: not a delivery");
+            }
+
+            var (delivered, failed, failures) = AuditTrail.ReadToday(options.LogDirectory);
+            Assert.Equal((2, 1), (delivered, failed));
+            Assert.Contains("FAILED client=192.168.1.63", Assert.Single(failures));
         }
         finally
         {

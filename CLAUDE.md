@@ -126,8 +126,11 @@ the console.
   `ServiceStartupFailure.ReportAsync` when running as a service (it logs, runs a minimal host, then stops).
 - Folder names never contain the company name: the program is in `{autopf}\SMTP Relay`, the data in
   `C:\ProgramData\SmtpRelay`. `installer/SmtpRelay.iss` moves a 2.0.0 installation out of `{autopf}\NEXQ\SMTP Relay`.
-- The audit line is `DELIVERED|FAILED client=<ip> user=<relay user or -> from=...`. `AuditTrail` and the console
-  only look at the marker, but administrators parse these lines: do not reorder the fields.
+- The audit line is `<time stamp> DELIVERED|FAILED client=<ip> user=<relay user or -> from=...`. `AuditTrail.Classify`
+  reads the event right after the time stamp, and the layout comes from the `outputTemplate` of the audit sink in
+  `LoggingSetup`: change one and the other (and the counters of the console and of SNMP after a restart) breaks.
+  `TheAuditFileTheServiceWritesIsCountedByTheConsole` writes with the real logger to catch that. Administrators
+  parse these lines too: do not reorder the fields.
 - `Iis6RelayList` decodes the binary `RelayIpList` of the IIS metabase from its known layout: the counter of each
   address group includes the group's mask (2.2.0 missed that and refused every real list). No real sample is in the
   tests yet. It must keep refusing data it does not understand instead of guessing; the console logs the raw value
