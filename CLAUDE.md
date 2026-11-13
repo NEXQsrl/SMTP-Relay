@@ -48,7 +48,7 @@ Three projects share one installation folder (the release publishes them self-co
   `ConfigLoader` load + atomic save, `RelayOptionsValidator` errors and warnings), `Security/` (`SecretStore`,
   `SecretProtector`, `MachineKey`, `WindowsAcl`, `IpAllowList`, `LogSanitizer`, `CertificateFinder`,
   `RelayUserStore`), `Migration/` (`Iis6RelayList`, the import of the IIS 6 relay restrictions), `Relay/`
-  (`UpstreamSender`, `EntraTokenProvider`), `Monitoring/` (`DeliveryCounters`, `AuditTrail`, `SnmpResponder`,
+  (`UpstreamSender`, `EntraTokenProvider`, `FailedSpool`), `Monitoring/` (`DeliveryCounters`, `AuditTrail`, `SnmpResponder`,
   `RelayMib`). Anything both executables need goes here.
 - **`src/SmtpRelay.Service`** (`SmtpRelay.exe`): dual-mode entry point. If `args[0]` is a CLI verb
   (`Cli/CommandLineHandler.cs`) it runs the command and exits; otherwise it validates the config fail-fast and runs
@@ -91,6 +91,16 @@ owns 161, and a failure there must never stop the relay. `Snmp.AllowedManagers` 
 names (`Monitoring/SnmpManagerList`: names are resolved at start and every five minutes, and keep their last
 addresses when the DNS fails); `Snmp.IpAddress` may be a DNS name of the computer. OIDs come from `RelayMib` and
 `AppInfo.SnmpEnterpriseNumber` (a placeholder until IANA assigns one) and must match `mib/NEXQ-SMTP-RELAY-MIB.txt`.
+
+Undelivered messages: there is no queue. `Relay/FailedSpool` keeps each failed message as `failed-<date>-<hash of
+the Message-ID>.eml` plus a `.json` with the SMTP envelope, the client and the reason; `RelayMessageStore` removes
+the copy when the same Message-ID is delivered later. The console lists them (Undelivered page) and resends with
+its own `UpstreamSender`, so a resend is logged in `manager-*.log` and is not in the audit trail or the counters.
+
+Console data read from disk: the usage columns of the allowlist come from `AuditTrail.ReadSenders` (every audit
+file still kept, read in the background when the page opens). `Configuration/SettingsBackup` writes and restores
+the `.srbackup` file (appsettings.json, secrets in clear text, users.json; AES-256-GCM, key from PBKDF2); the CLI
+verbs are `backup` and `restore`.
 
 Configuration: `appsettings.json` next to the executables -> `appsettings.{env}.json` -> env vars prefixed
 `SMTPRELAY_` (`__` separator), bound to the `SmtpRelay` section. Read once at startup: changes need a service

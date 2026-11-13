@@ -22,6 +22,7 @@ public static class CommandLineHandler
         "install", "uninstall", "start", "stop", "restart", "status",
         "set-credential", "remove-credential", "list-credentials",
         "set-user", "remove-user", "enable-user", "disable-user", "list-users",
+        "backup", "restore",
         "test-upstream", "show-config"
     };
 
@@ -52,6 +53,8 @@ public static class CommandLineHandler
                 "enable-user" => EnableUser(options, map, enabled: true),
                 "disable-user" => EnableUser(options, map, enabled: false),
                 "list-users" => ListUsers(options),
+                "backup" => Backup(map),
+                "restore" => Restore(map),
                 "test-upstream" => await TestUpstreamAsync(options),
                 "show-config" => ShowConfig(options),
                 _ => PrintHelp()
@@ -266,6 +269,67 @@ public static class CommandLineHandler
         return 0;
     }
 
+    private static int Backup(Dictionary<string, string> map)
+    {
+        var admin = RequireAdmin();
+        if (admin is not null)
+            return admin.Value;
+        if (!map.TryGetValue("file", out var file) || string.IsNullOrWhiteSpace(file))
+        {
+            Console.Error.WriteLine("Usage: SmtpRelay backup --file <path> [--stdin]");
+            return 2;
+        }
+
+        string password;
+        if (map.ContainsKey("stdin") || Console.IsInputRedirected)
+        {
+            password = Console.In.ReadToEnd().TrimEnd('\r', '\n');
+        }
+        else
+        {
+            password = ReadMasked("Password that protects the backup: ");
+            if (ReadMasked("Type it again: ") != password)
+            {
+                Console.Error.WriteLine("The two passwords are different: nothing was saved.");
+                return 2;
+            }
+        }
+        if (SettingsBackup.DescribePasswordProblem(password) is { } problem)
+        {
+            Console.Error.WriteLine(problem + " Nothing was saved.");
+            return 2;
+        }
+
+        var summary = SettingsBackup.Create(Path.GetFullPath(file), AppContext.BaseDirectory, password);
+        Console.WriteLine($"Backup saved in {Path.GetFullPath(file)}: settings, {summary.Secrets} secret(s), {summary.Users} user(s).");
+        if (summary.UsesCertificates)
+            Console.WriteLine("Note: the settings use certificates. They are not in the backup: export them from this computer and import them on the new one.");
+        return 0;
+    }
+
+    private static int Restore(Dictionary<string, string> map)
+    {
+        var admin = RequireAdmin();
+        if (admin is not null)
+            return admin.Value;
+        if (!map.TryGetValue("file", out var file) || !File.Exists(file))
+        {
+            Console.Error.WriteLine("Usage: SmtpRelay restore --file <path> [--stdin]");
+            return 2;
+        }
+
+        var password = map.ContainsKey("stdin") || Console.IsInputRedirected
+            ? Console.In.ReadToEnd().TrimEnd('\r', '\n')
+            : ReadMasked("Password of the backup: ");
+
+        var summary = SettingsBackup.Restore(Path.GetFullPath(file), AppContext.BaseDirectory, password);
+        Console.WriteLine($"Restored the backup made on {summary.Computer} ({summary.CreatedUtc.ToLocalTime():yyyy-MM-dd HH:mm}, version {summary.ProductVersion}): settings, {summary.Secrets} secret(s), {summary.Users} user(s).");
+        if (summary.UsesCertificates)
+            Console.WriteLine("Note: the settings use certificates. Import them on this computer and check their thumbprints with 'SmtpRelay show-config'.");
+        Console.WriteLine("Restart the service to apply the settings.");
+        return 0;
+    }
+
     private static async Task<int> TestUpstreamAsync(RelayOptions options)
     {
         var errors = RelayOptionsValidator.Validate(options);
@@ -408,7 +472,7 @@ public static class CommandLineHandler
                 continue;
             var key = a[2..];
             // The value of --value / --password may itself start with "--".
-            bool takesValue = key is "name" or "value" or "account" or "password";
+            bool takesValue = key is "name" or "value" or "account" or "password" or "file";
             if (i + 1 < args.Length && (takesValue || !args[i + 1].StartsWith("--", StringComparison.Ordinal)))
                 map[key] = args[++i];
             else
@@ -474,6 +538,10 @@ USERS (for clients that sign in to the relay; they are not Windows accounts):
   disable-user | enable-user --name <user>         Stops a user from signing in, or lets it sign in again
   remove-user --name <user>                        Removes a user
   list-users                                       Lists the users
+
+BACKUP (to move the relay to another server; administrator rights needed):
+  backup --file <path> [--stdin]                   Saves settings, secrets and users in one file encrypted with a password
+  restore --file <path> [--stdin]                  Replaces settings, secrets and users with the ones of a backup
 
 DIAGNOSTICS:
   test-upstream        Connects and authenticates to the smart host

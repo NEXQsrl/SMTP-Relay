@@ -138,7 +138,12 @@ SMTP Relay **has not had an independent security review**. Do not expose the lis
   store without further setup. You can run it under a dedicated account (`SmtpRelay.exe install --account`); the
   account then needs the right to log on as a service and access to the private key of the TLS certificate.
 - There is **no queue**: when the smart host is not reachable the client receives `451` and must retry. Devices
-  that do not retry lose the message, except for the copy in the `failed` folder.
+  that do not retry lose the message, except for the copy in the `failed` folder, which an administrator can send
+  again from the Undelivered page of the console.
+- A **backup file** (`.srbackup`) holds every stored secret in clear text and the password hashes of the users,
+  encrypted with AES-256-GCM under a key derived from the backup password (PBKDF2-SHA256, 600,000 iterations). Its
+  protection is the password: choose a long one, and treat the file like the secrets it contains. The first lines
+  of the file (date, computer name, number of secrets and users) are not encrypted.
 - Inbound TLS is optional and off by default: on the first hop, device to relay, mail travels in clear text unless
   you configure a certificate.
 - A self-signed code signing certificate gives no reputation with SmartScreen or antivirus products, and trusting it

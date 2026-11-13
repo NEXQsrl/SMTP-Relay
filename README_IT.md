@@ -21,7 +21,7 @@
 </p>
 
 <p align="center">
-  <img alt="Versione 2.2.2" src="https://img.shields.io/badge/versione-2.2.2-2563eb">
+  <img alt="Versione 2.3.0" src="https://img.shields.io/badge/versione-2.3.0-2563eb">
   <img alt="Windows Server e Windows 10/11" src="https://img.shields.io/badge/Windows-Server%202016%2B%20%7C%2010%20%7C%2011-0f766e">
   <img alt="Microsoft 365 OAuth2" src="https://img.shields.io/badge/Microsoft%20365-OAuth2-7c3aed">
   <img alt="Self-hosted" src="https://img.shields.io/badge/self--hosted-on%20premises-475569">
@@ -79,7 +79,7 @@ SMTP Relay si mette tra quegli apparati e il sistema di posta:
   </tr>
 </table>
 
-<sub>Le immagini mostrano l'interfaccia reale della versione 2.2.2 con dati di esempio (indirizzi, tenant e messaggi sono esempi). L'interfaccia è in inglese.</sub>
+<sub>Le immagini mostrano l'interfaccia reale della versione 2.3.0 con dati di esempio (indirizzi, tenant e messaggi sono esempi). L'interfaccia è in inglese.</sub>
 
 ## Funzionalità
 
@@ -125,6 +125,11 @@ SMTP Relay si mette tra quegli apparati e il sistema di posta:
 ### Gestione
 - **Console grafica** in inglese per ogni impostazione, con controllo mentre scrivi e avvisi chiari (open relay,
   credenziali in chiaro, segreto mancante).
+- **Messaggi non consegnati**: una pagina elenca i messaggi che lo smart host non ha preso, con mittente,
+  destinatari e motivo, e li reinvia o li elimina.
+- **Chi usa il relay**: per ogni indirizzo o rete dell'elenco, quando ha inviato l'ultima volta e quanti messaggi.
+- **Backup e ripristino**: impostazioni, segreti e utenti in un file cifrato con password, per spostare il relay
+  su un altro server.
 - **Audit delle consegne**: una riga per messaggio, in un file dedicato, protetta dalla falsificazione dei log (gli
   a capo in oggetti e indirizzi vengono rimossi).
 - **Log** con rotazione giornaliera e per dimensione e conservazione automatica, più avvisi ed errori nel registro
@@ -141,9 +146,9 @@ SMTP Relay si mette tra quegli apparati e il sistema di posta:
 Serve un Windows Server (o Windows 10/11) raggiungibile dai tuoi apparati, e i diritti di amministratore.
 Nient'altro: il runtime .NET è incluso nel setup.
 
-**1. Scarica** `SmtpRelay-Setup-2.2.2.exe` dall'
+**1. Scarica** `SmtpRelay-Setup-2.3.0.exe` dall'
 [ultima versione](https://github.com/NEXQsrl/SMTP-Relay/releases/latest). La release elenca lo SHA-256 di ogni file
-(`SHA256SUMS.txt`): controllalo con `Get-FileHash .\SmtpRelay-Setup-2.2.2.exe -Algorithm SHA256`.
+(`SHA256SUMS.txt`): controllalo con `Get-FileHash .\SmtpRelay-Setup-2.3.0.exe -Algorithm SHA256`.
 
 **2. Considera attendibile la firma (una volta per server).** I file sono firmati da *NEXQ S.r.l.* con un
 certificato autofirmato. Windows lo considera attendibile solo dopo che lo hai importato. Il certificato pubblico è
@@ -151,7 +156,7 @@ dentro la firma del file; estrailo, controlla che l'identificazione personale (t
 `989A5C82203AB19B6DB29FC447E8CB5EBEEB60D8`, poi importalo (PowerShell come amministratore):
 
 ```powershell
-$cert = (Get-AuthenticodeSignature .\SmtpRelay-Setup-2.2.2.exe).SignerCertificate
+$cert = (Get-AuthenticodeSignature .\SmtpRelay-Setup-2.3.0.exe).SignerCertificate
 $cert.Thumbprint          # deve essere 989A5C82203AB19B6DB29FC447E8CB5EBEEB60D8
 Export-Certificate -Cert $cert -FilePath .\NEXQ-CodeSigning.cer | Out-Null
 Import-Certificate -FilePath .\NEXQ-CodeSigning.cer -CertStoreLocation Cert:\LocalMachine\Root
@@ -188,7 +193,7 @@ mostrare *Running*.
 ### Installazione automatica
 
 ```powershell
-.\SmtpRelay-Setup-2.2.2.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG="C:\Temp\smtprelay-setup.log"
+.\SmtpRelay-Setup-2.3.0.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG="C:\Temp\smtprelay-setup.log"
 ```
 
 Poi copia il tuo `appsettings.json` nella cartella di installazione, salva il segreto e avvia il servizio:
@@ -340,7 +345,7 @@ conoscono finché non glielo dici tu.
 | Cosa vedi | Perché | Cosa fare |
 |---|---|---|
 | *Autore sconosciuto* nella richiesta UAC | Il certificato non è ancora attendibile su questo computer | Importalo come al [passo 2](#installazione-in-cinque-minuti). La richiesta mostrerà *Autore verificato: NEXQ S.r.l.* |
-| *PC protetto da Windows* (SmartScreen) | Il file è stato scaricato da Internet e non ha reputazione; una firma autofirmata non ne costruisce | *Ulteriori informazioni > Esegui comunque*, oppure esegui prima `Unblock-File .\SmtpRelay-Setup-2.2.2.exe` dopo averne controllato lo SHA-256 |
+| *PC protetto da Windows* (SmartScreen) | Il file è stato scaricato da Internet e non ha reputazione; una firma autofirmata non ne costruisce | *Ulteriori informazioni > Esegui comunque*, oppure esegui prima `Unblock-File .\SmtpRelay-Setup-2.3.0.exe` dopo averne controllato lo SHA-256 |
 | *Accesso negato* all'avvio del setup o dei programmi, evento 1121 di Microsoft Defender | La regola di riduzione della superficie di attacco *Blocca l'esecuzione dei file eseguibili a meno che non soddisfino un criterio di prevalenza, età o elenco attendibile* blocca qualsiasi programma nuovo | Aggiungi un'esclusione (sotto), oppure in Microsoft Defender per endpoint crea un indicatore **Consenti** per il certificato |
 | L'antivirus mette in quarantena o blocca un file | Euristiche su un programma nuovo, poco diffuso, che ascolta su una porta | Controlla lo SHA-256 con quello della release, poi consenti il certificato dell'autore o escludi la cartella di installazione |
 
@@ -348,7 +353,7 @@ Esclusione per le regole di riduzione della superficie di attacco di Microsoft D
 amministratore; la prima riga serve solo mentre esegui il setup):
 
 ```powershell
-Add-MpPreference -AttackSurfaceReductionOnlyExclusions "C:\Install\SmtpRelay-Setup-2.2.2.exe"
+Add-MpPreference -AttackSurfaceReductionOnlyExclusions "C:\Install\SmtpRelay-Setup-2.3.0.exe"
 Add-MpPreference -AttackSurfaceReductionOnlyExclusions "C:\Program Files\SMTP Relay"
 ```
 
@@ -415,6 +420,67 @@ Un nuovo file inizia ogni giorno e quando si raggiunge il limite di dimensione; 
 conservazione vengono eliminati automaticamente (31 giorni per impostazione predefinita). Gli oggetti dei messaggi
 fanno parte della riga di audit: se nella tua organizzazione non è accettabile, limita ulteriormente l'accesso alla
 cartella o disattiva l'audit.
+
+## Messaggi non consegnati
+
+Il relay non ha una coda propria. Quando lo smart host non può prendere un messaggio, l'apparato che lo ha inviato
+riceve un errore temporaneo (`451`) e ci si aspetta che lo reinvii da solo, come con qualsiasi server SMTP. Quando
+lo smart host rifiuta un messaggio, l'apparato riceve `554`. In entrambi i casi il relay ne conserva una copia, e la
+pagina **Undelivered** della console le elenca:
+
+<p align="center"><img src="assets/screenshots/undelivered.png" alt="Pagina Undelivered" width="720"></p>
+
+- Di ogni messaggio vedi oggetto, mittente e destinatari della busta SMTP (compresi quelli nascosti), l'apparato
+  da cui è arrivato, quando, e cosa ha risposto lo smart host. *Temporary error* significa che lo smart host non
+  era disponibile; *Refused* significa che ha risposto di no (mittente sbagliato, destinatario non accettato,
+  messaggio troppo grande).
+- **Resend** invia la copia direttamente allo smart host con mittente e destinatari originali, usando le
+  impostazioni della console, e la toglie dall'elenco quando lo smart host la accetta. **Resend all** lo fa per
+  tutto l'elenco. **Open** mostra il messaggio nel programma di posta. **Delete** elimina la copia senza inviarla.
+- Una copia sparisce da sola quando l'apparato consegna lo stesso messaggio più tardi (lo si riconosce dal
+  Message-ID), e quando è più vecchia del periodo di conservazione (30 giorni per impostazione predefinita,
+  **Logging & retention**).
+
+Prima di reinviare, chiediti se l'apparato riproverà: se lo ha già fatto, il destinatario riceve il messaggio due
+volte. Reinviare un messaggio *Refused* funziona solo dopo aver rimosso la causa. Ciò che reinvii o elimini viene
+scritto nel log della console (`manager-*.log`); non viene aggiunto all'audit né ai contatori del giorno. Le copie
+salvate dalle versioni precedenti alla 2.3.0 non hanno la busta: i destinatari sono letti dalle intestazioni.
+
+## Chi usa il relay
+
+La tabella di **Allowed senders** ha due colonne in più per ogni indirizzo o rete: **Last used**, l'ultima volta
+che ha inviato un messaggio, e **Messages**, quanti messaggi sono stati inoltrati allo smart host (con accanto
+quelli falliti). Una rete somma i suoi indirizzi. Una voce con *Never* non ha inviato nulla nel periodo: è una
+buona candidata alla rimozione.
+
+I valori sono letti dall'audit delle consegne, quindi coprono i giorni di conservazione dei log (31 per
+impostazione predefinita) e sono vuoti quando l'audit è disattivato. Per contare su un periodo più lungo, aumenta i
+giorni in **Logging & retention** (o in **About & updates > Log retention**, che è la stessa impostazione).
+
+## Backup e spostamento su un altro server
+
+**About & updates > Backup and restore** salva la configurazione in un solo file (`.srbackup`):
+
+| Nel backup | Non nel backup |
+|---|---|
+| Le impostazioni (`appsettings.json`) | I certificati (TLS in ingresso, registrazione dell'app) |
+| I segreti salvati: password dello smart host, client secret, password del `.pfx`, community SNMP | I log e l'audit |
+| Gli utenti del relay (gli hash delle password) | I messaggi non consegnati |
+
+I segreti salvati sono legati al computer e altrove non sarebbero leggibili, quindi il backup li contiene in chiaro
+dentro un file cifrato con una password scelta da te (AES-256). Senza la password il file non si può ripristinare,
+e la password non si può recuperare: conserva entrambi al sicuro.
+
+Per spostare il relay:
+
+1. Sul vecchio server: **Back up settings…**, scegli una password, salva il file.
+2. Sul nuovo server: installa SMTP Relay, apri **About & updates**, **Restore from a backup…**.
+3. Se usi certificati, esportali dal vecchio server con la chiave privata e importali in
+   *Computer locale > Personale* sul nuovo. La console ti avvisa quando le impostazioni ne hanno bisogno.
+4. Controlla **Listener** (l'indirizzo di ascolto può essere diverso) e premi **Save and restart service**.
+
+Il ripristino sostituisce tutte le impostazioni, i segreti e gli utenti dell'installazione. Lo stesso si può fare
+da riga di comando con `SmtpRelay.exe backup --file <percorso>` e `SmtpRelay.exe restore --file <percorso>`.
 
 ## Monitoraggio con SNMP
 
@@ -515,6 +581,7 @@ nella cartella dati, come hash con salt.
 | `remove-credential --name <nome>` · `list-credentials` | Rimuove un segreto · elenca i nomi (mai i valori) |
 | `set-user --name <utente> [--stdin]` | Crea un utente del relay o ne cambia la password |
 | `disable-user` · `enable-user` · `remove-user --name <utente>` · `list-users` | Impedisce l'accesso a un utente · lo riabilita · lo rimuove · elenca gli utenti |
+| `backup --file <percorso> [--stdin]` · `restore --file <percorso> [--stdin]` | Salva impostazioni, segreti e utenti in un file cifrato con password · li sostituisce con quelli di un backup |
 | `test-upstream` | Si connette e accede allo smart host |
 | `show-config` | Mostra la configurazione effettiva, gli avvisi e gli errori |
 
@@ -546,6 +613,12 @@ e la regola del firewall vengono rimossi. Il setup chiede se eliminare anche imp
 impostazione predefinita vengono conservati.
 
 ## Stato del progetto
+
+La versione 2.3.0 aggiunge la pagina Undelivered con il reinvio, le colonne di utilizzo dell'elenco e il backup
+delle impostazioni. Le tre funzioni sono coperte da test automatici sui file e sul listener reale; **i pulsanti
+della console (Resend, Back up, Restore) non sono stati provati a mano su un server**, e il ripristino su un secondo
+computer è stato provato solo fra due cartelle dello stesso computer. Prova il ripristino prima di dismettere il
+vecchio server.
 
 La versione 2.2.0 aggiunge l'accesso dei client con gli utenti propri del relay e l'importazione dell'elenco da
 IIS 6. L'accesso è coperto dai test automatici sul listener reale. **L'importazione da IIS 6 è stata provata solo

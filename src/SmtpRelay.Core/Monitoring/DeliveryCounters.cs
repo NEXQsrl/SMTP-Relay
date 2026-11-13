@@ -1,4 +1,7 @@
+using System.Globalization;
+using System.Net;
 using System.Text;
+using SmtpRelay.Security;
 
 namespace SmtpRelay.Monitoring;
 
@@ -73,6 +76,36 @@ public sealed class DeliveryCounters
     }
 }
 
+/// <summary>What one client address did, according to the audit trail.</summary>
+public sealed record SenderActivity(IPAddress Address, int Delivered, int Failed, DateTimeOffset LastSeen);
+
+/// <summary>The activity of the clients over the days the audit trail is kept.</summary>
+/// <param name="Since">Day of the oldest audit file that was read; null when there is none.</param>
+public sealed record SenderReport(IReadOnlyList<SenderActivity> Senders, DateOnly? Since)
+{
+    public static SenderReport Empty { get; } = new(Array.Empty<SenderActivity>(), null);
+
+    /// <summary>Adds up the clients that an allowlist entry (an address or a CIDR network) covers.</summary>
+    public (int Delivered, int Failed, DateTimeOffset? LastSeen) For(string allowListEntry)
+    {
+        if (!IpAllowList.TryParse(allowListEntry, out var range))
+            return (0, 0, null);
+
+        int delivered = 0, failed = 0;
+        DateTimeOffset? last = null;
+        foreach (var sender in Senders)
+        {
+            if (!range.Contains(sender.Address))
+                continue;
+            delivered += sender.Delivered;
+            failed += sender.Failed;
+            if (last is null || sender.LastSeen > last)
+                last = sender.LastSeen;
+        }
+        return (delivered, failed, last);
+    }
+}
+
 /// <summary>Reads the delivery events of the audit trail (audit-yyyyMMdd.log) without locking the files.</summary>
 public static class AuditTrail
 {
@@ -117,6 +150,76 @@ public static class AuditTrail
             failures = failures.GetRange(failures.Count - maxFailures, maxFailures);
         failures.Reverse();
         return (delivered, failed, failures);
+    }
+
+    /// <summary>
+    /// Reads every audit file that is still kept and adds up, for each client address, the messages it sent
+    /// and the last time it was seen.
+    /// </summary>
+    public static SenderReport ReadSenders(string directory)
+    {
+        var senders = new Dictionary<IPAddress, (int Delivered, int Failed, DateTimeOffset Last)>();
+        DateOnly? since = null;
+        try
+        {
+            if (!Directory.Exists(directory))
+                return SenderReport.Empty;
+
+            foreach (var file in Directory.EnumerateFiles(directory, "audit-*.log"))
+            {
+                var name = Path.GetFileNameWithoutExtension(file);
+                if (name.Length >= 14 && DateOnly.TryParseExact(name.AsSpan(6, 8), "yyyyMMdd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var day) &&
+                    (since is null || day < since))
+                {
+                    since = day;
+                }
+
+                using var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                using var reader = new StreamReader(stream, Encoding.UTF8);
+                string? line;
+                while ((line = reader.ReadLine()) is not null)
+                {
+                    if (Classify(line) is not { } delivered || !TryReadClient(line, out var address, out var time))
+                        continue;
+
+                    senders.TryGetValue(address, out var entry);
+                    senders[address] = (
+                        entry.Delivered + (delivered ? 1 : 0),
+                        entry.Failed + (delivered ? 0 : 1),
+                        time > entry.Last ? time : entry.Last);
+                }
+            }
+        }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
+
+        return new SenderReport(
+            senders.Select(p => new SenderActivity(p.Key, p.Value.Delivered, p.Value.Failed, p.Value.Last)).ToList(),
+            since);
+    }
+
+    // "yyyy-MM-dd HH:mm:ss.fff +zz:zz EVENT client=<address> ...": the client is the first field after the event.
+    private static bool TryReadClient(string line, out IPAddress address, out DateTimeOffset time)
+    {
+        address = IPAddress.None;
+        time = default;
+
+        const string field = " client=";
+        int start = line.IndexOf(field, StringComparison.Ordinal);
+        if (start < 0 || line.Length < 30)
+            return false;
+        start += field.Length;
+        int end = line.IndexOf(' ', start);
+        if (end < 0)
+            end = line.Length;
+
+        if (!IPAddress.TryParse(line.AsSpan(start, end - start), out var parsed))
+            return false;
+        if (!DateTimeOffset.TryParseExact(line.AsSpan(0, 30), "yyyy-MM-dd HH:mm:ss.fff zzz", CultureInfo.InvariantCulture, DateTimeStyles.None, out time))
+            return false;
+
+        address = parsed.IsIPv4MappedToIPv6 ? parsed.MapToIPv4() : parsed;
+        return true;
     }
 
     /// <summary>

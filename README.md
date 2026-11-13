@@ -21,7 +21,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version 2.2.2" src="https://img.shields.io/badge/version-2.2.2-2563eb">
+  <img alt="Version 2.3.0" src="https://img.shields.io/badge/version-2.3.0-2563eb">
   <img alt="Windows Server and Windows 10/11" src="https://img.shields.io/badge/Windows-Server%202016%2B%20%7C%2010%20%7C%2011-0f766e">
   <img alt="Microsoft 365 OAuth2" src="https://img.shields.io/badge/Microsoft%20365-OAuth2-7c3aed">
   <img alt="Self-hosted" src="https://img.shields.io/badge/self--hosted-on%20premises-475569">
@@ -77,7 +77,7 @@ SMTP Relay sits between those devices and your mail system:
   </tr>
 </table>
 
-<sub>The screenshots show the real interface of version 2.2.2 with sample data (addresses, tenants and messages are examples).</sub>
+<sub>The screenshots show the real interface of version 2.3.0 with sample data (addresses, tenants and messages are examples).</sub>
 
 ## Features
 
@@ -120,6 +120,11 @@ SMTP Relay sits between those devices and your mail system:
 ### Operations
 - **Graphical console** in English for every setting, with validation as you type and clear warnings (open relay,
   credentials in clear text, missing secret).
+- **Undelivered messages**: a page lists the messages the smart host did not take, with sender, recipients and
+  reason, and sends them again or deletes them.
+- **Who uses the relay**: for every address or network of the allowlist, when it last sent and how many messages.
+- **Backup and restore**: settings, secrets and users in one file encrypted with a password, to move the relay to
+  another server.
 - **Delivery audit trail**: one line per message, in its own file, safe against log forging (line breaks in
   subjects and addresses are removed).
 - **Logs** with daily and size rotation and automatic retention, plus warnings and errors in the Windows
@@ -135,16 +140,16 @@ SMTP Relay sits between those devices and your mail system:
 You need a Windows Server (or Windows 10/11) that your devices can reach, and administrator rights on it.
 Nothing else: the .NET runtime is included in the setup.
 
-**1. Download** `SmtpRelay-Setup-2.2.2.exe` from the
+**1. Download** `SmtpRelay-Setup-2.3.0.exe` from the
 [latest release](https://github.com/NEXQsrl/SMTP-Relay/releases/latest). The release lists the SHA-256 of every file
-(`SHA256SUMS.txt`): check it with `Get-FileHash .\SmtpRelay-Setup-2.2.2.exe -Algorithm SHA256`.
+(`SHA256SUMS.txt`): check it with `Get-FileHash .\SmtpRelay-Setup-2.3.0.exe -Algorithm SHA256`.
 
 **2. Trust the signature (once per server).** The files are signed by *NEXQ S.r.l.* with a self-signed certificate.
 Windows trusts it only after you import it. The public certificate is inside the signature of the file; extract it,
 check that its thumbprint is `989A5C82203AB19B6DB29FC447E8CB5EBEEB60D8`, then import it (elevated PowerShell):
 
 ```powershell
-$cert = (Get-AuthenticodeSignature .\SmtpRelay-Setup-2.2.2.exe).SignerCertificate
+$cert = (Get-AuthenticodeSignature .\SmtpRelay-Setup-2.3.0.exe).SignerCertificate
 $cert.Thumbprint          # must be 989A5C82203AB19B6DB29FC447E8CB5EBEEB60D8
 Export-Certificate -Cert $cert -FilePath .\NEXQ-CodeSigning.cer | Out-Null
 Import-Certificate -FilePath .\NEXQ-CodeSigning.cer -CertStoreLocation Cert:\LocalMachine\Root
@@ -184,7 +189,7 @@ if you configured a certificate). Each message appears in the **Logs** page with
 ### Unattended installation
 
 ```powershell
-.\SmtpRelay-Setup-2.2.2.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG="C:\Temp\smtprelay-setup.log"
+.\SmtpRelay-Setup-2.3.0.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG="C:\Temp\smtprelay-setup.log"
 ```
 
 Then copy your `appsettings.json` to the installation folder, store the secret and start the service:
@@ -333,7 +338,7 @@ no public authority vouches for it, so Windows and security products do not know
 | What you see | Why | What to do |
 |---|---|---|
 | *Unknown publisher* in the UAC prompt | The certificate is not trusted on this computer yet | Import it as in [step 2](#install-in-five-minutes). The prompt then shows *Verified publisher: NEXQ S.r.l.* |
-| *Windows protected your PC* (SmartScreen) | The file was downloaded from the Internet and has no reputation; a self-signed signature does not build any | *More info > Run anyway*, or first run `Unblock-File .\SmtpRelay-Setup-2.2.2.exe` after checking its SHA-256 |
+| *Windows protected your PC* (SmartScreen) | The file was downloaded from the Internet and has no reputation; a self-signed signature does not build any | *More info > Run anyway*, or first run `Unblock-File .\SmtpRelay-Setup-2.3.0.exe` after checking its SHA-256 |
 | *Access denied* when starting the setup or the programs, event 1121 of Microsoft Defender | The attack surface reduction rule *Block executable files from running unless they meet a prevalence, age, or trusted list criterion* blocks any new program | Add an exclusion (below), or in Microsoft Defender for Endpoint create an **Allow** indicator for the certificate |
 | The antivirus quarantines or blocks a file | Heuristics on a new, rarely seen program that listens on a port | Check the SHA-256 against the release, then allow the publisher certificate or exclude the installation folder |
 
@@ -341,7 +346,7 @@ Exclusion for the Microsoft Defender attack surface reduction rules (elevated Po
 only while you run the setup):
 
 ```powershell
-Add-MpPreference -AttackSurfaceReductionOnlyExclusions "C:\Install\SmtpRelay-Setup-2.2.2.exe"
+Add-MpPreference -AttackSurfaceReductionOnlyExclusions "C:\Install\SmtpRelay-Setup-2.3.0.exe"
 Add-MpPreference -AttackSurfaceReductionOnlyExclusions "C:\Program Files\SMTP Relay"
 ```
 
@@ -406,6 +411,65 @@ Everything is under `C:\ProgramData\SmtpRelay\logs` (the folder can be changed),
 A new file starts every day and when the size limit is reached; files older than the retention are deleted
 automatically (31 days by default). Subjects are part of the audit line: if that is not acceptable in your
 organization, restrict access to the folder further or turn the audit trail off.
+
+## Undelivered messages
+
+The relay has no queue of its own. When the smart host cannot take a message, the device that sent it receives a
+temporary error (`451`) and is expected to send it again by itself, as with any SMTP server. When the smart host
+refuses a message, the device receives `554`. In both cases the relay keeps a copy, and the **Undelivered** page
+of the console lists them:
+
+<p align="center"><img src="assets/screenshots/undelivered.png" alt="Undelivered messages page" width="720"></p>
+
+- Each message shows the subject, sender and recipients of the SMTP envelope (hidden recipients included), the
+  device it came from, when, and what the smart host answered. *Temporary error* means the smart host was not
+  available; *Refused* means it answered no (wrong sender, recipient not accepted, message too large).
+- **Resend** sends the copy straight to the smart host with its original sender and recipients, using the settings
+  of the console, and removes it from the list when the smart host accepts it. **Resend all** does it for the whole
+  list. **Open** shows the message in your mail program. **Delete** removes the copy without sending.
+- A copy disappears by itself when the device delivers the same message later (it is recognized by its Message-ID),
+  and when it is older than the retention (30 days by default, **Logging & retention**).
+
+Before you resend, think about whether the device will retry: if it already has, the recipient gets the message
+twice. Resending a *Refused* message works only after the cause has been removed. What you resend or delete is
+written to the console log (`manager-*.log`); it is not added to the audit trail or to the counters of the day.
+Copies saved by versions before 2.3.0 have no envelope: their recipients are read from the headers.
+
+## Who uses the relay
+
+The table of **Allowed senders** has two more columns for each address or network: **Last used**, the last time
+it sent a message, and **Messages**, how many messages it had forwarded to the smart host (with the failed ones
+next to it). A network adds up its addresses. An entry that says *Never* has not sent anything in the period: a
+good candidate for removal.
+
+The figures are read from the delivery audit trail, so they cover the days the logs are kept (31 by default) and
+are empty when the audit trail is off. To count over a longer period, raise the days in **Logging & retention**
+(or in **About & updates > Log retention**, which is the same setting).
+
+## Backup and moving to another server
+
+**About & updates > Backup and restore** saves the configuration in one file (`.srbackup`):
+
+| In the backup | Not in the backup |
+|---|---|
+| The settings (`appsettings.json`) | Certificates (inbound TLS, app registration) |
+| The stored secrets: smart host password, client secret, `.pfx` password, SNMP community | Logs and the audit trail |
+| The users of the relay (their password hashes) | Undelivered messages |
+
+Stored secrets are tied to the computer and could not be read elsewhere, so the backup holds them in clear text
+inside a file encrypted with a password you choose (AES-256). Without the password the file cannot be restored,
+and the password cannot be recovered: keep both safely.
+
+To move the relay:
+
+1. On the old server: **Back up settings…**, choose a password, save the file.
+2. On the new server: install SMTP Relay, open **About & updates**, **Restore from a backup…**.
+3. If you use certificates, export them from the old server with their private key and import them into
+   *Local Machine > Personal* on the new one. The console tells you when the settings need them.
+4. Check **Listener** (the address to listen on may differ) and press **Save and restart service**.
+
+Restore replaces every setting, secret and user of the installation. The same can be done from the command line
+with `SmtpRelay.exe backup --file <path>` and `SmtpRelay.exe restore --file <path>`.
 
 ## Monitoring with SNMP
 
@@ -506,6 +570,7 @@ in the data folder, as salted hashes.
 | `remove-credential --name <name>` · `list-credentials` | Removes a secret · lists the names (never the values) |
 | `set-user --name <user> [--stdin]` | Creates a relay user or changes its password |
 | `disable-user` · `enable-user` · `remove-user --name <user>` · `list-users` | Stops a user from signing in · lets it sign in again · removes it · lists the users |
+| `backup --file <path> [--stdin]` · `restore --file <path> [--stdin]` | Saves settings, secrets and users in a file encrypted with a password · replaces them with the ones of a backup |
 | `test-upstream` | Connects and signs in to the smart host |
 | `show-config` | Shows the effective configuration, warnings and errors |
 
@@ -536,6 +601,12 @@ folder and removes the old one. Data in `C:\ProgramData\SmtpRelay` does not move
 firewall rule are removed. The setup asks whether to delete settings, secrets and logs too; by default they are kept.
 
 ## Project status
+
+Version 2.3.0 adds the Undelivered page with resend, the usage columns of the allowlist and the backup of the
+settings. The three are covered by automated tests on the files and on the real listener; **the buttons of the
+console (Resend, Back up, Restore) have not been exercised by hand on a server**, and a restore on a second
+computer has been tested only between two folders of the same computer. Try the restore before you retire the
+old server.
 
 Version 2.2.0 adds the sign-in of the clients with the relay's own users and the import of the allowlist from IIS 6.
 The sign-in is covered by the automated tests against the real listener. **The import from IIS 6 has been tested

@@ -1,8 +1,6 @@
 using System.Buffers;
 using System.Diagnostics;
 using System.Net;
-using System.Security.Cryptography;
-using System.Text;
 using Microsoft.Extensions.Logging;
 using MimeKit;
 using SmtpRelay.Configuration;
@@ -27,7 +25,7 @@ public sealed class RelayMessageStore : MessageStore
 
     private readonly IUpstreamSender _sender;
     private readonly DeliveryOptions _delivery;
-    private readonly string _failedSpoolDirectory;
+    private readonly FailedSpool _spool;
     private readonly ILogger _logger;
     private readonly ILogger _audit;
     private readonly DeliveryCounters _counters;
@@ -44,7 +42,7 @@ public sealed class RelayMessageStore : MessageStore
         _counters = counters;
         _sender = sender;
         _delivery = delivery;
-        _failedSpoolDirectory = failedSpoolDirectory;
+        _spool = new FailedSpool(failedSpoolDirectory);
         _logger = logger;
         _audit = audit;
     }
@@ -93,6 +91,10 @@ public sealed class RelayMessageStore : MessageStore
                 await _sender.SendAsync(message, envelopeFrom, recipients, cancellationToken).ConfigureAwait(false);
                 stopwatch.Stop();
 
+                // A client that retried after a temporary error: its earlier copy is no longer undelivered.
+                if (_delivery.SpoolFailedMessages)
+                    _spool.RemoveDelivered(message.MessageId);
+
                 _counters.RecordDelivered();
                 _audit.LogInformation(
                     "DELIVERED client={ClientIp} user={User} from={From} to={To} size={Size} subject={Subject} durationMs={Duration}",
@@ -123,7 +125,19 @@ public sealed class RelayMessageStore : MessageStore
                 _logger.LogError(ex, "Delivery to the smart host failed (permanent={Permanent}).", permanent);
 
                 if (_delivery.SpoolFailedMessages)
-                    await SpoolAsync(message, clientIp).ConfigureAwait(false);
+                {
+                    await SpoolAsync(message, new SpoolRecord
+                    {
+                        TimeUtc = DateTime.UtcNow,
+                        Client = clientIp,
+                        User = user,
+                        From = envelopeFrom,
+                        Recipients = recipients,
+                        Subject = message.Subject ?? "",
+                        Permanent = permanent,
+                        Reason = LogSanitizer.Clean(ex.Message, 512)
+                    }).ConfigureAwait(false);
+                }
 
                 return permanent
                     ? new SmtpResponse(SmtpReplyCode.TransactionFailed, "5.4.0 Message could not be relayed")
@@ -132,22 +146,13 @@ public sealed class RelayMessageStore : MessageStore
         }
     }
 
-    private async Task SpoolAsync(MimeMessage message, string clientIp)
+    private async Task SpoolAsync(MimeMessage message, SpoolRecord record)
     {
         try
         {
-            Directory.CreateDirectory(_failedSpoolDirectory);
             CleanupSpoolIfDue();
-
-            // The same message sent again by a client that retries replaces its previous copy.
-            var id = message.MessageId ?? Guid.NewGuid().ToString("N");
-            var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(id)), 0, 8).ToLowerInvariant();
-            var path = Path.Combine(_failedSpoolDirectory, $"failed-{DateTime.UtcNow:yyyyMMdd}-{hash}.eml");
-
-            await using (var fs = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None))
-                await message.WriteToAsync(fs, CancellationToken.None).ConfigureAwait(false);
-
-            _logger.LogInformation("Copy of the undelivered message saved in {Path} (client {ClientIp}).", path, clientIp);
+            var path = await _spool.SaveAsync(message, record).ConfigureAwait(false);
+            _logger.LogInformation("Copy of the undelivered message saved in {Path} (client {ClientIp}).", path, record.Client);
         }
         catch (Exception ex)
         {
@@ -166,22 +171,7 @@ public sealed class RelayMessageStore : MessageStore
         if (now < due || Interlocked.CompareExchange(ref _nextCleanupTicks, now + CleanupInterval.Ticks, due) != due)
             return;
 
-        var limit = DateTime.UtcNow.AddDays(-_delivery.FailedSpoolRetentionDays);
-        int removed = 0;
-        foreach (var file in Directory.EnumerateFiles(_failedSpoolDirectory, "failed-*.eml"))
-        {
-            try
-            {
-                if (File.GetLastWriteTimeUtc(file) < limit)
-                {
-                    File.Delete(file);
-                    removed++;
-                }
-            }
-            catch (IOException) { }
-            catch (UnauthorizedAccessException) { }
-        }
-
+        int removed = _spool.Cleanup(_delivery.FailedSpoolRetentionDays);
         if (removed > 0)
             _logger.LogInformation("Removed {Count} spooled message(s) older than {Days} days.", removed, _delivery.FailedSpoolRetentionDays);
     }

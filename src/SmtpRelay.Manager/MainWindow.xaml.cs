@@ -6,6 +6,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
 using Microsoft.Win32;
+using SmtpRelay.Configuration;
 using SmtpRelay.Manager.Services;
 using SmtpRelay.Manager.ViewModels;
 
@@ -16,6 +17,7 @@ public partial class MainWindow : Window
     private readonly MainViewModel _vm;
     private readonly DispatcherTimer _editTimer;
     private readonly DispatcherTimer _statusTimer;
+    private int _statusTicks;
 
     public MainWindow(MainViewModel viewModel)
     {
@@ -38,8 +40,32 @@ public partial class MainWindow : Window
         _statusTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
         _statusTimer.Tick += (_, _) => RefreshStatus();
 
+        // Pages whose content is read from disk are filled when they are opened.
+        _vm.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(MainViewModel.Page))
+                RefreshPageData(force: true);
+        };
+
         Loaded += OnLoaded;
         Closing += OnClosing;
+    }
+
+    private async void RefreshPageData(bool force)
+    {
+        if (_vm.IsDemo)
+            return;
+        try
+        {
+            if (_vm.Page == "Access" && (force || _statusTicks % 10 == 0))
+                await _vm.RefreshSenderActivityAsync();
+            if (_vm.Page == "Undelivered" && (force || _statusTicks % 3 == 0))
+                _vm.RefreshUndelivered();
+        }
+        catch (Exception)
+        {
+            // The figures are a convenience: a file that cannot be read now is read at the next refresh.
+        }
     }
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
@@ -74,6 +100,8 @@ public partial class MainWindow : Window
             _vm.RefreshStats();
         if (_vm.Page == "Access")
             _vm.RefreshUsers(); // a user may have been changed with the command line
+        _statusTicks++;
+        RefreshPageData(force: false);
         if (_vm.Page == "Logs" && _vm.AutoRefreshLogs)
             _vm.RefreshLogFiles();
     }
@@ -267,6 +295,211 @@ public partial class MainWindow : Window
 
         int added = _vm.ImportAllowedIps(fresh, import.Source);
         ShowInfo($"{added} entr{(added == 1 ? "y" : "ies")} added. Nothing in IIS was changed.\n\nSave the settings and restart the service to apply them.");
+    }
+
+    // ----- undelivered messages --------------------------------------------------------------------------
+
+    private void RefreshUndelivered_Click(object sender, RoutedEventArgs e) => _vm.RefreshUndelivered();
+
+    private void OpenSpoolFolder_Click(object sender, RoutedEventArgs e)
+    {
+        var directory = _vm.Options.FailedSpoolDirectory;
+        if (Directory.Exists(directory))
+            OpenExternal(directory);
+        else
+            ShowInfo($"The folder does not exist yet: no message has failed so far.\n{directory}");
+    }
+
+    private void OpenUndelivered_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: UndeliveredRow row } && File.Exists(row.Message.Path))
+            OpenExternal(row.Message.Path);
+    }
+
+    private bool SettingsAllowResend()
+    {
+        _vm.Revalidate();
+        if (!_vm.HasErrors)
+            return true;
+        ShowError("Fix the settings first:\n\n• " + string.Join("\n• ", _vm.Errors));
+        return false;
+    }
+
+    private async void ResendOne_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: UndeliveredRow row } || !SettingsAllowResend())
+            return;
+
+        var answer = MessageBox.Show(this,
+            $"Send this message again?\n\nSubject: {row.Subject}\nFrom: {row.From}\nTo: {row.To}\n\n" +
+            "If the device that sent it has already tried again, the recipient receives it twice.",
+            Title, MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.Yes);
+        if (answer != MessageBoxResult.Yes)
+            return;
+
+        await RunBusyAsync("Sending the message…", async () =>
+        {
+            try
+            {
+                await _vm.ResendAsync(row);
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException("The message was not sent and stays in the list:\n" + Describe(ex), ex);
+            }
+        });
+        _vm.RefreshUndelivered();
+    }
+
+    private async void ResendAll_Click(object sender, RoutedEventArgs e)
+    {
+        var rows = _vm.Undelivered.ToList();
+        if (rows.Count == 0 || !SettingsAllowResend())
+            return;
+
+        var answer = MessageBox.Show(this,
+            $"Send all the {rows.Count} messages of the list again?\n\n" +
+            "Messages that a device has already sent again by itself reach their recipients twice.",
+            Title, MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
+        if (answer != MessageBoxResult.Yes)
+            return;
+
+        int sent = 0;
+        string? firstError = null;
+        await RunBusyAsync("Sending the messages…", async () =>
+        {
+            foreach (var row in rows)
+            {
+                BusyText.Text = $"Sending message {sent + 1} of {rows.Count}…";
+                try
+                {
+                    await _vm.ResendAsync(row);
+                    sent++;
+                }
+                catch (Exception ex)
+                {
+                    firstError ??= Describe(ex);
+                }
+            }
+        });
+        _vm.RefreshUndelivered();
+
+        if (firstError is null)
+            ShowInfo($"{sent} message{(sent == 1 ? "" : "s")} sent.");
+        else
+            ShowError($"{sent} of {rows.Count} messages sent. The others stay in the list.\n\nFirst error: {firstError}");
+    }
+
+    private void DeleteUndelivered_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: UndeliveredRow row })
+            return;
+
+        var answer = MessageBox.Show(this,
+            $"Delete this message without sending it?\n\nSubject: {row.Subject}\nTo: {row.To}",
+            Title, MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
+        if (answer != MessageBoxResult.Yes)
+            return;
+
+        try
+        {
+            _vm.DeleteUndelivered(row);
+        }
+        catch (Exception ex)
+        {
+            ShowError("The message was not deleted:\n" + ex.Message);
+        }
+        _vm.RefreshUndelivered();
+    }
+
+    // ----- backup and restore ----------------------------------------------------------------------------
+
+    private void Backup_Click(object sender, RoutedEventArgs e)
+    {
+        if (_vm.IsDirty)
+        {
+            ShowInfo("Save or discard your changes first: the backup contains the saved settings.");
+            return;
+        }
+
+        var password = new PasswordDialog(this, "Back up settings",
+            "Choose a password for the backup file. It protects the passwords and the other secrets that the file contains; you need it to restore, and it cannot be recovered.",
+            SettingsBackup.DescribePasswordProblem, okText: "Continue");
+        if (password.ShowDialog() != true)
+            return;
+
+        var dialog = new SaveFileDialog
+        {
+            Title = "Save the backup",
+            Filter = $"SMTP Relay backup (*{SettingsBackup.FileExtension})|*{SettingsBackup.FileExtension}",
+            FileName = $"SmtpRelay-{Environment.MachineName}-{DateTime.Now:yyyyMMdd}{SettingsBackup.FileExtension}",
+            OverwritePrompt = true
+        };
+        if (dialog.ShowDialog(this) != true)
+            return;
+
+        try
+        {
+            var summary = _vm.CreateBackup(dialog.FileName, password.Password);
+            ShowInfo($"Backup saved:\n{dialog.FileName}\n\nIt contains the settings, {summary.Secrets} secret{(summary.Secrets == 1 ? "" : "s")} and {summary.Users} user{(summary.Users == 1 ? "" : "s")}." +
+                     (summary.UsesCertificates
+                         ? "\n\nYour settings use certificates. They are not in the backup: export them from this computer (with their private key) and import them on the new one."
+                         : ""));
+        }
+        catch (Exception ex)
+        {
+            ShowError("The backup was not saved:\n" + ex.Message);
+        }
+    }
+
+    private void Restore_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new OpenFileDialog
+        {
+            Title = "Choose the backup to restore",
+            Filter = $"SMTP Relay backup (*{SettingsBackup.FileExtension})|*{SettingsBackup.FileExtension}|All files (*.*)|*.*",
+            CheckFileExists = true
+        };
+        if (dialog.ShowDialog(this) != true)
+            return;
+
+        BackupSummary found;
+        try
+        {
+            found = SettingsBackup.Describe(dialog.FileName);
+        }
+        catch (Exception ex)
+        {
+            ShowError(ex.Message);
+            return;
+        }
+
+        var answer = MessageBox.Show(this,
+            $"Restore this backup?\n\nMade on {found.Computer}, {found.CreatedUtc.ToLocalTime():yyyy-MM-dd HH:mm}, version {found.ProductVersion}.\n" +
+            $"It contains the settings, {found.Secrets} secret{(found.Secrets == 1 ? "" : "s")} and {found.Users} user{(found.Users == 1 ? "" : "s")}.\n\n" +
+            "Every setting, secret and user of this installation is replaced" + (_vm.IsDirty ? ", and your unsaved changes are lost." : "."),
+            Title, MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
+        if (answer != MessageBoxResult.Yes)
+            return;
+
+        var password = new PasswordDialog(this, "Restore from a backup", "Type the password that was chosen when the backup was made.",
+            _ => null, okText: "Restore", confirm: false);
+        if (password.ShowDialog() != true)
+            return;
+
+        try
+        {
+            var summary = _vm.RestoreBackup(dialog.FileName, password.Password);
+            ShowInfo("The settings were restored." +
+                     (summary.UsesCertificates
+                         ? "\n\nThey use certificates: import them on this computer, then check the Inbound TLS and Smart host pages."
+                         : "") +
+                     "\n\nRestart the service to apply them.");
+        }
+        catch (Exception ex)
+        {
+            ShowError("Nothing was restored:\n" + ex.Message);
+        }
     }
 
     // ----- users of the relay ----------------------------------------------------------------------------

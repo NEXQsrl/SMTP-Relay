@@ -201,6 +201,41 @@ public sealed class RelayEndToEndTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task AnUndeliveredMessageIsListedWithItsEnvelopeUntilTheClientDeliversItAgain()
+    {
+        _smartHost.TransientFailures = 1;
+        await StartRelayAsync(); // one attempt: the first send fails with 451
+        var spool = new FailedSpool(Path.Combine(_dataDir, "failed"));
+
+        using var message = NewMessage("Invoice 1187");
+        message.MessageId = "invoice-1187@corp.example";
+        message.Bcc.Add(MailboxAddress.Parse("audit@example.org")); // only in the envelope: MailKit does not send the header
+
+        using var client = await ConnectAsync();
+        var ex = await Assert.ThrowsAsync<SmtpCommandException>(() => client.SendAsync(message));
+        Assert.Equal(451, (int)ex.StatusCode);
+
+        var undelivered = Assert.Single(spool.List());
+        Assert.True(undelivered.HasEnvelope);
+        Assert.Equal("printer@corp.example", undelivered.Record.From);
+        Assert.Equal(new[] { "alice@example.org", "bob@example.org", "audit@example.org" }, undelivered.Record.Recipients);
+        Assert.Equal("Invoice 1187", undelivered.Record.Subject);
+        Assert.Equal("127.0.0.1", undelivered.Record.Client);
+        Assert.False(undelivered.Record.Permanent);
+        Assert.NotEmpty(undelivered.Record.Reason);
+
+        // What the console does with "Resend": the stored copy goes out with the stored envelope.
+        using (var copy = FailedSpool.Load(undelivered))
+            Assert.Equal("Invoice 1187", copy.Subject);
+
+        // The device tries again by itself and this time the smart host takes the message.
+        await client.SendAsync(message);
+        Assert.Single(_smartHost.Messages);
+        Assert.Empty(spool.List()); // nothing is left to resend by hand
+        Assert.Equal((1, 1), _counters.Today);
+    }
+
+    [Fact]
     public async Task TooManyRecipientsAreRefused()
     {
         await StartRelayAsync(o => o.Listener.MaxRecipients = 1);

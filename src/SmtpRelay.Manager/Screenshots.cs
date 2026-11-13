@@ -1,5 +1,6 @@
 #if DEBUG
 using System.IO;
+using System.Net;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -7,6 +8,8 @@ using System.Windows.Threading;
 using SmtpRelay.Configuration;
 using SmtpRelay.Manager.Services;
 using SmtpRelay.Manager.ViewModels;
+using SmtpRelay.Monitoring;
+using SmtpRelay.Relay;
 
 namespace SmtpRelay.Manager;
 
@@ -50,6 +53,35 @@ internal static class Screenshots
 
             var vm = new MainViewModel(temp, isDemo: true);
             vm.SetDemoServiceState(ServiceState.Running);
+            var at = new DateTimeOffset(2026, 11, 11, 10, 46, 0, TimeSpan.FromHours(1));
+            vm.SetSenderReport(new SenderReport(new[]
+            {
+                new SenderActivity(IPAddress.Parse("127.0.0.1"), 12, 0, at.AddDays(-3)),
+                new SenderActivity(IPAddress.Parse("192.168.10.44"), 18240, 31, at.AddMinutes(-4)),
+                new SenderActivity(IPAddress.Parse("192.168.10.61"), 302, 2, at.AddHours(-2)),
+                new SenderActivity(IPAddress.Parse("10.20.4.12"), 9120, 6, at)
+            }, new DateOnly(2026, 10, 12)));
+            vm.SetUndelivered(new[]
+            {
+                new SpooledMessage(@"C:\ProgramData\SmtpRelay\failed\failed-20261111-3f2a9c41d07b5e86.eml", new SpoolRecord
+                {
+                    TimeUtc = at.UtcDateTime.AddMinutes(-4), Client = "192.168.10.44", User = "-", From = "scanner@contoso.com",
+                    Recipients = { "m.rossi@fabrikam.com" }, Subject = "Scan 0042", Permanent = true,
+                    Reason = "5.7.60 Client does not have permissions to send as this sender"
+                }, 4821330, true),
+                new SpooledMessage(@"C:\ProgramData\SmtpRelay\failed\failed-20261111-a1c4f0b92d7e6a55.eml", new SpoolRecord
+                {
+                    TimeUtc = at.UtcDateTime.AddMinutes(-91), Client = "10.20.4.12", User = "erp@contoso.com", From = "erp@contoso.com",
+                    Recipients = { "billing@northwind.example", "accounting@contoso.com" }, Subject = "Invoice 2026/1187", Permanent = false,
+                    Reason = "4.4.1 Smart host not available"
+                }, 18244, true),
+                new SpooledMessage(@"C:\ProgramData\SmtpRelay\failed\failed-20261111-38c1d4e97c1a2b3d.eml", new SpoolRecord
+                {
+                    TimeUtc = at.UtcDateTime.AddMinutes(-163), Client = "192.168.10.61", User = "nas-backup", From = "nas@contoso.com",
+                    Recipients = { "it@contoso.com" }, Subject = "Backup report", Permanent = false,
+                    Reason = "4.4.1 Smart host not available"
+                }, 2210, true)
+            });
             vm.SetUsers(new[] { new RelayUserRow("erp@contoso.com", true), new RelayUserRow("nas-backup", true), new RelayUserRow("old-scanner", false) });
             vm.SetStats(1284, 3, new[]
             {
@@ -80,14 +112,14 @@ internal static class Screenshots
             var window = new MainWindow(vm) { Width = 1180, Height = 840, ShowInTaskbar = false, WindowStartupLocation = WindowStartupLocation.Manual, Left = -4000, Top = 0 };
             window.Show();
 
-            foreach (var page in new[] { "Overview", "Listener", "Access", "SmartHost", "Tls", "Logging", "Logs", "Snmp", "About" })
+            foreach (var page in new[] { "Overview", "Listener", "Access", "SmartHost", "Tls", "Logging", "Logs", "Undelivered", "Snmp", "About" })
             {
                 if (page == "About")
                 {
                     vm.SetRelease(new ReleaseInfo(
-                        new Version(2, 3, 0, 0), "v2.3.0",
+                        new Version(2, 4, 0, 0), "v2.4.0",
                         "- Faster delivery: the connection to the smart host is reused between messages\n- New: more figures for your monitoring system\n- Fixes and updated dependencies",
-                        AppInfo.ReleasesUrl, AppInfo.ReleasesUrl + "/download/v2.3.0/SmtpRelay-Setup-2.3.0.exe", "SmtpRelay-Setup-2.3.0.exe", 1, null), newer: true);
+                        AppInfo.ReleasesUrl, AppInfo.ReleasesUrl + "/download/v2.4.0/SmtpRelay-Setup-2.4.0.exe", "SmtpRelay-Setup-2.4.0.exe", 1, null), newer: true);
                 }
 
                 vm.Page = page;

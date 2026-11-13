@@ -60,6 +60,8 @@
                     <TextBlock Text="MONITORING" Foreground="{StaticResource NavMuted}" FontSize="10.5" FontWeight="SemiBold" Margin="24,18,0,6" />
                     <RadioButton Style="{StaticResource NavItem}" GroupName="Nav" Tag="&#xE8A5;" Content="Logs"
                                  IsChecked="{Binding Page, Converter={StaticResource Eq}, ConverterParameter=Logs}" />
+                    <RadioButton Style="{StaticResource NavItem}" GroupName="Nav" Tag="&#xE7BA;" Content="Undelivered"
+                                 IsChecked="{Binding Page, Converter={StaticResource Eq}, ConverterParameter=Undelivered}" />
                     <RadioButton Style="{StaticResource NavItem}" GroupName="Nav" Tag="&#xE9D9;" Content="SNMP"
                                  IsChecked="{Binding Page, Converter={StaticResource Eq}, ConverterParameter=Snmp}" />
                     <RadioButton Style="{StaticResource NavItem}" GroupName="Nav" Tag="&#xE946;" Content="About &amp; updates"
@@ -338,28 +340,49 @@
 
                                 <Border BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="8" Margin="0,14,0,0" MinHeight="60">
                                     <Grid>
-                                        <TextBlock Text="The list is empty." Foreground="{StaticResource TextMuted}" Margin="14" x:Name="EmptyIpText" />
-                                        <ItemsControl ItemsSource="{Binding AllowedIps}">
-                                            <ItemsControl.ItemTemplate>
-                                                <DataTemplate>
-                                                    <Border BorderBrush="{StaticResource Line}" BorderThickness="0,0,0,1" Padding="14,0">
-                                                        <Grid Height="40">
-                                                            <Grid.ColumnDefinitions>
-                                                                <ColumnDefinition Width="Auto" />
-                                                                <ColumnDefinition Width="*" />
-                                                                <ColumnDefinition Width="Auto" />
-                                                            </Grid.ColumnDefinitions>
-                                                            <TextBlock Text="&#xEA18;" Style="{StaticResource Icon}" Foreground="{StaticResource Ok}" Margin="0,0,12,0" />
-                                                            <TextBlock Grid.Column="1" Text="{Binding}" FontFamily="{StaticResource Mono}" FontSize="13" VerticalAlignment="Center" />
-                                                            <Button Grid.Column="2" Content="Remove" Style="{StaticResource LinkButton}" Foreground="{StaticResource Danger}"
-                                                                    VerticalAlignment="Center" Click="RemoveIp_Click" Tag="{Binding}" />
-                                                        </Grid>
-                                                    </Border>
-                                                </DataTemplate>
-                                            </ItemsControl.ItemTemplate>
-                                        </ItemsControl>
+                                        <TextBlock Text="The list is empty." Foreground="{StaticResource TextMuted}" Margin="14,48,14,14" x:Name="EmptyIpText" />
+                                        <StackPanel>
+                                            <Border BorderBrush="{StaticResource Line}" BorderThickness="0,0,0,1" Padding="14,0" Background="{StaticResource Page}" CornerRadius="8,8,0,0">
+                                                <Grid Height="34">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="28" />
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="150" />
+                                                        <ColumnDefinition Width="170" />
+                                                        <ColumnDefinition Width="70" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock Grid.Column="1" Text="ADDRESS OR NETWORK" FontSize="10.5" FontWeight="SemiBold" Foreground="{StaticResource TextMuted}" VerticalAlignment="Center" />
+                                                    <TextBlock Grid.Column="2" Text="LAST USED" FontSize="10.5" FontWeight="SemiBold" Foreground="{StaticResource TextMuted}" VerticalAlignment="Center" />
+                                                    <TextBlock Grid.Column="3" Text="MESSAGES" FontSize="10.5" FontWeight="SemiBold" Foreground="{StaticResource TextMuted}" VerticalAlignment="Center" />
+                                                </Grid>
+                                            </Border>
+                                            <ItemsControl ItemsSource="{Binding AllowedIpRows}">
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <Border BorderBrush="{StaticResource Line}" BorderThickness="0,0,0,1" Padding="14,0">
+                                                            <Grid Height="40">
+                                                                <Grid.ColumnDefinitions>
+                                                                    <ColumnDefinition Width="28" />
+                                                                    <ColumnDefinition Width="*" />
+                                                                    <ColumnDefinition Width="150" />
+                                                                    <ColumnDefinition Width="170" />
+                                                                    <ColumnDefinition Width="70" />
+                                                                </Grid.ColumnDefinitions>
+                                                                <TextBlock Text="&#xEA18;" Style="{StaticResource Icon}" Foreground="{StaticResource Ok}" />
+                                                                <TextBlock Grid.Column="1" Text="{Binding Entry}" FontFamily="{StaticResource Mono}" FontSize="13" VerticalAlignment="Center" />
+                                                                <TextBlock Grid.Column="2" Text="{Binding LastUsed}" FontSize="12.5" VerticalAlignment="Center" Foreground="{StaticResource TextSoft}" />
+                                                                <TextBlock Grid.Column="3" Text="{Binding Messages}" FontSize="12.5" VerticalAlignment="Center" Foreground="{StaticResource TextSoft}" />
+                                                                <Button Grid.Column="4" Content="Remove" Style="{StaticResource LinkButton}" Foreground="{StaticResource Danger}"
+                                                                        VerticalAlignment="Center" HorizontalAlignment="Right" Click="RemoveIp_Click" Tag="{Binding Entry}" />
+                                                            </Grid>
+                                                        </Border>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </StackPanel>
                                     </Grid>
                                 </Border>
+                                <TextBlock Style="{StaticResource Hint}" Margin="0,8,0,0" Text="{Binding SenderActivityNote}" />
                             </StackPanel>
                         </Border>
 
@@ -910,6 +933,69 @@
                 </Grid>
 
                 <!-- ============ SNMP ============ -->
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Visibility="{Binding Page, Converter={StaticResource PageVis}, ConverterParameter=Undelivered}">
+                    <StackPanel Margin="32,0,32,16">
+                        <Border Style="{StaticResource CardBorder}">
+                            <StackPanel>
+                                <TextBlock Text="Messages that were not delivered" Style="{StaticResource H2}" />
+                                <TextBlock Style="{StaticResource Sub}" Margin="0,0,0,12"
+                                           Text="The relay has no queue of its own. When the smart host cannot take a message, the device that sent it receives a temporary error and is expected to try again by itself; when the smart host refuses a message, the device is told so. In both cases a copy is kept here. A copy disappears when the same message is delivered later, when you send it again or delete it, and when it is older than the retention set in Logging &amp; retention." />
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="{Binding UndeliveredSummary}" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                    <StackPanel Grid.Column="1" Orientation="Horizontal">
+                                        <Button Content="Refresh" Style="{StaticResource SecondaryButton}" Click="RefreshUndelivered_Click" Margin="0,0,8,0" />
+                                        <Button Content="Open folder" Style="{StaticResource SecondaryButton}" Click="OpenSpoolFolder_Click" Margin="0,0,8,0" />
+                                        <Button Content="Resend all" Style="{StaticResource PrimaryButton}" Click="ResendAll_Click" IsEnabled="{Binding HasUndelivered}" />
+                                    </StackPanel>
+                                </Grid>
+
+                                <ItemsControl ItemsSource="{Binding Undelivered}" Margin="0,14,0,0">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="8" Padding="14,10" Margin="0,0,0,8">
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <StackPanel>
+                                                        <StackPanel Orientation="Horizontal">
+                                                            <Border CornerRadius="9" Padding="8,1" Margin="0,0,10,0" VerticalAlignment="Center"
+                                                                    Background="{Binding KindState, Converter={StaticResource Kind}, ConverterParameter=soft}">
+                                                                <TextBlock Text="{Binding Kind}" FontSize="11" FontWeight="SemiBold"
+                                                                           Foreground="{Binding KindState, Converter={StaticResource Kind}}" />
+                                                            </Border>
+                                                            <TextBlock Text="{Binding Subject}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" MaxWidth="520" />
+                                                        </StackPanel>
+                                                        <TextBlock Margin="0,5,0,0" FontSize="12.5" Foreground="{StaticResource TextSoft}" TextTrimming="CharacterEllipsis">
+                                                            <Run Text="{Binding From, Mode=OneWay}" FontFamily="{StaticResource Mono}" /><Run Text="  →  " /><Run Text="{Binding To, Mode=OneWay}" FontFamily="{StaticResource Mono}" />
+                                                        </TextBlock>
+                                                        <TextBlock Margin="0,3,0,0" FontSize="12" Foreground="{StaticResource TextMuted}">
+                                                            <Run Text="{Binding Time, Mode=OneWay}" /><Run Text="  ·  " /><Run Text="{Binding Size, Mode=OneWay}" /><Run Text="  ·  " /><Run Text="{Binding Client, Mode=OneWay}" />
+                                                        </TextBlock>
+                                                        <TextBlock Margin="0,5,0,0" FontSize="12" Foreground="{StaticResource TextSoft}" TextWrapping="Wrap" Text="{Binding Reason}" />
+                                                    </StackPanel>
+                                                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top" Margin="16,0,0,0">
+                                                        <Button Content="Resend" Style="{StaticResource LinkButton}" Margin="0,0,16,0" Click="ResendOne_Click" Tag="{Binding}" />
+                                                        <Button Content="Open" Style="{StaticResource LinkButton}" Margin="0,0,16,0" Click="OpenUndelivered_Click" Tag="{Binding}" />
+                                                        <Button Content="Delete" Style="{StaticResource LinkButton}" Foreground="{StaticResource Danger}" Click="DeleteUndelivered_Click" Tag="{Binding}" />
+                                                    </StackPanel>
+                                                </Grid>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <TextBlock Style="{StaticResource Hint}" Margin="0,6,0,0"
+                                           Text="Resend goes straight to the smart host with the settings of this console and the original sender and recipients. If the device has sent the same message again in the meantime, the recipient receives it twice: resend what the device will not retry. What you resend or delete is written to the console log, not to the audit trail." />
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+
                 <ScrollViewer VerticalScrollBarVisibility="Auto" Visibility="{Binding Page, Converter={StaticResource PageVis}, ConverterParameter=Snmp}">
                     <StackPanel Margin="32,0,32,16">
                         <Border Style="{StaticResource CardBorder}">
@@ -1063,6 +1149,33 @@
                                           Content="Check for updates when this console is opened" />
                                 <TextBlock Style="{StaticResource Hint}" Margin="50,6,0,0"
                                            Text="Only the console contacts GitHub (api.github.com), and only to read the latest release: nothing about this computer is sent. The service itself never goes online for updates. An update is installed only if it is signed by NEXQ S.r.l." />
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource CardBorder}">
+                            <StackPanel>
+                                <TextBlock Text="Log retention" Style="{StaticResource H2}" />
+                                <TextBlock Style="{StaticResource Sub}" Margin="0,0,0,12"
+                                           Text="How many days the application log and the delivery audit trail are kept. Older files are deleted automatically. It is the same setting as in Logging &amp; retention, where the size of the files is set too." />
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBox Width="110" Text="{Binding LogRetentionDays, UpdateSourceTrigger=PropertyChanged}" />
+                                    <TextBlock Text="days" VerticalAlignment="Center" Margin="10,0,0,0" Foreground="{StaticResource TextSoft}" />
+                                </StackPanel>
+                                <TextBlock Style="{StaticResource Hint}" Text="Empty = no time limit. Saved with the other settings; the service applies it after a restart. The Allowed senders page counts the messages over these days." />
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource CardBorder}">
+                            <StackPanel>
+                                <TextBlock Text="Backup and restore" Style="{StaticResource H2}" />
+                                <TextBlock Style="{StaticResource Sub}" Margin="0,0,0,14"
+                                           Text="Saves the settings, the stored secrets (passwords, client secret, SNMP community) and the users of the relay in one file protected by a password, to move the relay to another server or to keep a copy. Certificates, logs and undelivered messages are not included." />
+                                <StackPanel Orientation="Horizontal">
+                                    <Button Content="Back up settings…" Style="{StaticResource PrimaryButton}" Click="Backup_Click" Margin="0,0,8,0" />
+                                    <Button Content="Restore from a backup…" Style="{StaticResource SecondaryButton}" Click="Restore_Click" />
+                                </StackPanel>
+                                <TextBlock Style="{StaticResource Hint}" Margin="0,10,0,0"
+                                           Text="On the new server: install SMTP Relay, open this page, restore the backup, then import the certificates if you use them and restart the service. Restore replaces every setting, secret and user of this installation." />
                             </StackPanel>
                         </Border>
 

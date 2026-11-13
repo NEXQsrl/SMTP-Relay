@@ -146,7 +146,12 @@ SMTP Relay **non ha avuto una revisione di sicurezza indipendente**. Non esporre
   (`SmtpRelay.exe install --account`); all'account servono il diritto di accesso come servizio e l'accesso alla
   chiave privata del certificato TLS.
 - **Non c'è una coda**: quando lo smart host non è raggiungibile il client riceve `451` e deve riprovare. Gli
-  apparati che non riprovano perdono il messaggio, salvo la copia nella cartella `failed`.
+  apparati che non riprovano perdono il messaggio, salvo la copia nella cartella `failed`, che un amministratore può
+  reinviare dalla pagina Undelivered della console.
+- Un **file di backup** (`.srbackup`) contiene tutti i segreti salvati in chiaro e gli hash delle password degli
+  utenti, cifrati con AES-256-GCM con una chiave derivata dalla password del backup (PBKDF2-SHA256, 600.000
+  iterazioni). La sua protezione è la password: sceglila lunga, e tratta il file come i segreti che contiene. Le
+  prime righe del file (data, nome del computer, numero di segreti e utenti) non sono cifrate.
 - Il TLS in ingresso è facoltativo e disattivato per impostazione predefinita: nel primo tratto, dall'apparato al
   relay, la posta viaggia in chiaro se non configuri un certificato.
 - Un certificato di firma del codice autofirmato non dà reputazione presso SmartScreen o gli antivirus, e

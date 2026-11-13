@@ -26,6 +26,28 @@ public sealed record RelayUserRow(string Name, bool Enabled)
     public string ToggleText => Enabled ? "Disable" : "Enable";
 }
 
+/// <summary>An entry of the allowlist with what the audit trail knows about it.</summary>
+public sealed record AllowedIpRow(string Entry, string LastUsed, string Messages, bool Used);
+
+/// <summary>A message that was not delivered, as shown in the Undelivered page.</summary>
+public sealed class UndeliveredRow
+{
+    public UndeliveredRow(SpooledMessage message) => Message = message;
+
+    public SpooledMessage Message { get; }
+    public string Time => Message.Record.TimeUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
+    public string From => Message.Record.From.Length == 0 ? "<>" : Message.Record.From;
+    public string To => string.Join(", ", Message.Record.Recipients);
+    public string Subject => Message.Record.Subject.Length == 0 ? "(no subject)" : Message.Record.Subject;
+    public string Client => Message.Record.Client.Length == 0 ? "" : "from " + Message.Record.Client;
+    public string Kind => !Message.HasEnvelope ? "Unknown" : Message.Record.Permanent ? "Refused" : "Temporary error";
+    public string KindState => Message.HasEnvelope && !Message.Record.Permanent ? "Dirty" : "Error";
+    public string Reason => Message.HasEnvelope
+        ? Message.Record.Reason
+        : "Saved by an earlier version: the reason was not recorded, and the recipients are read from the headers (hidden recipients are not known).";
+    public string Size => Message.SizeBytes < 1048576 ? $"{Math.Max(1, Message.SizeBytes / 1024)} KB" : $"{Message.SizeBytes / 1048576.0:0.0} MB";
+}
+
 /// <summary>State of the management console.</summary>
 public sealed class MainViewModel : INotifyPropertyChanged
 {
@@ -41,6 +63,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         _configDirectory = configDirectory;
         IsDemo = isDemo;
         Options = new RelayOptions();
+        AllowedIps.CollectionChanged += (_, _) => RebuildAllowedIpRows();
         Reload();
     }
 
@@ -54,6 +77,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public bool IsDemo { get; }
 
     public ObservableCollection<string> AllowedIps { get; } = new();
+    public ObservableCollection<AllowedIpRow> AllowedIpRows { get; } = new();
+    public ObservableCollection<UndeliveredRow> Undelivered { get; } = new();
     public ObservableCollection<string> SnmpManagers { get; } = new();
     public ObservableCollection<RelayUserRow> Users { get; } = new();
     public ObservableCollection<string> Errors { get; } = new();
@@ -497,7 +522,16 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public string LogRetentionDays
     {
         get => Options.Logging.RetainedFileTimeLimitDays?.ToString() ?? "";
-        set => Options.Logging.RetainedFileTimeLimitDays = int.TryParse(value, out var days) ? days : null;
+        set
+        {
+            Options.Logging.RetainedFileTimeLimitDays = int.TryParse(value, out var days) ? days : null;
+
+            // The number of files is a second limit: keep it from deleting logs before the days are over.
+            if (days > Options.Logging.RetainedFileCountLimit)
+                Options.Logging.RetainedFileCountLimit = days;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(Options));
+        }
     }
 
     public bool TlsEnabled => Options.Tls.Mode != InboundTlsMode.None;
@@ -556,6 +590,142 @@ public sealed class MainViewModel : INotifyPropertyChanged
             ManagerLog.Write($"Allowlist: {added.Count} entr{(added.Count == 1 ? "y" : "ies")} imported from {source} (not saved yet): {string.Join(", ", added)}.");
         Revalidate();
         return added.Count;
+    }
+
+    // ----- activity of the senders -----------------------------------------------------------------------
+
+    private SenderReport _senders = SenderReport.Empty;
+    private bool _loadingSenders;
+
+    /// <summary>What the two columns of the allowlist are counted from.</summary>
+    public string SenderActivityNote => !Options.Logging.AuditTrail
+        ? "Last used and Messages are read from the audit trail, which is turned off (Logging & retention)."
+        : _senders.Since is { } since
+            ? $"Last used and Messages are counted from the audit trail kept on this computer, since {since:yyyy-MM-dd}. A network adds up its addresses. Messages are those forwarded to the smart host."
+            : "Last used and Messages are counted from the audit trail: nothing has been sent yet.";
+
+    /// <summary>Reads the audit trail in the background and fills the two columns of the allowlist.</summary>
+    public async Task RefreshSenderActivityAsync()
+    {
+        if (IsDemo || _loadingSenders)
+            return;
+
+        _loadingSenders = true;
+        try
+        {
+            var directory = Options.LogDirectory;
+            SetSenderReport(await Task.Run(() => AuditTrail.ReadSenders(directory)));
+        }
+        finally
+        {
+            _loadingSenders = false;
+        }
+    }
+
+    public void SetSenderReport(SenderReport report)
+    {
+        _senders = report;
+        RebuildAllowedIpRows();
+        OnPropertyChanged(nameof(SenderActivityNote));
+    }
+
+    private void RebuildAllowedIpRows()
+    {
+        var rows = AllowedIps.Select(entry =>
+        {
+            var (delivered, failed, last) = _senders.For(entry);
+            return new AllowedIpRow(
+                entry,
+                last is { } time ? time.ToLocalTime().ToString("yyyy-MM-dd HH:mm") : "Never",
+                failed > 0 ? $"{delivered:N0}  (+{failed:N0} failed)" : delivered.ToString("N0"),
+                last is not null);
+        }).ToList();
+
+        if (AllowedIpRows.SequenceEqual(rows))
+            return;
+        AllowedIpRows.Clear();
+        foreach (var row in rows)
+            AllowedIpRows.Add(row);
+    }
+
+    // ----- undelivered messages --------------------------------------------------------------------------
+
+    private FailedSpool Spool => new(Options.FailedSpoolDirectory);
+
+    public string UndeliveredSummary => !Options.Delivery.SpoolFailedMessages
+        ? "Copies of undelivered messages are turned off (Logging & retention): there is nothing to show."
+        : Undelivered.Count switch
+        {
+            0 => "No undelivered message.",
+            1 => "1 undelivered message.",
+            _ => $"{Undelivered.Count} undelivered messages."
+        };
+
+    public bool HasUndelivered => Undelivered.Count > 0;
+
+    public void RefreshUndelivered()
+    {
+        if (!IsDemo)
+            SetUndelivered(Spool.List());
+    }
+
+    public void SetUndelivered(IEnumerable<SpooledMessage> messages)
+    {
+        var list = messages.ToList();
+        if (!Undelivered.Select(r => r.Message).SequenceEqual(list))
+        {
+            Undelivered.Clear();
+            foreach (var message in list)
+                Undelivered.Add(new UndeliveredRow(message));
+        }
+        OnPropertyChanged(nameof(UndeliveredSummary));
+        OnPropertyChanged(nameof(HasUndelivered));
+    }
+
+    /// <summary>Sends a spooled message to the smart host with its original envelope, then removes the copy.</summary>
+    public async Task ResendAsync(UndeliveredRow row)
+    {
+        var record = row.Message.Record;
+        if (record.Recipients.Count == 0)
+            throw new InvalidOperationException("The recipients of this message are not known.");
+
+        using var message = FailedSpool.Load(row.Message);
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+        try
+        {
+            await CreateSender().SendAsync(message, record.From, record.Recipients, cts.Token);
+        }
+        catch (Exception ex)
+        {
+            ManagerLog.Write($"Resend of '{row.Subject}' to {row.To} failed: {ex.Message}");
+            throw;
+        }
+
+        Spool.Delete(row.Message);
+        ManagerLog.Write($"Undelivered message resent: from={row.From} to={row.To} subject={row.Subject} (first failed {row.Time}, client {record.Client}).");
+    }
+
+    public void DeleteUndelivered(UndeliveredRow row)
+    {
+        Spool.Delete(row.Message);
+        ManagerLog.Write($"Undelivered message deleted without sending: from={row.From} to={row.To} subject={row.Subject}.");
+    }
+
+    // ----- backup and restore ----------------------------------------------------------------------------
+
+    public BackupSummary CreateBackup(string path, string password)
+    {
+        var summary = SettingsBackup.Create(path, _configDirectory, password);
+        ManagerLog.Write($"Backup of the settings saved to {path} ({summary.Secrets} secrets, {summary.Users} users).");
+        return summary;
+    }
+
+    public BackupSummary RestoreBackup(string path, string password)
+    {
+        var summary = SettingsBackup.Restore(path, _configDirectory, password);
+        Reload();
+        ManagerLog.Write($"Settings restored from {path}: backup of {summary.Computer}, {summary.CreatedUtc.ToLocalTime():yyyy-MM-dd HH:mm}, version {summary.ProductVersion} ({summary.Secrets} secrets, {summary.Users} users).");
+        return summary;
     }
 
     // ----- sign-in of the clients and users of the relay -------------------------------------------------
@@ -1112,6 +1282,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         "Logging" => "Logging & retention",
         "Logs" => "Logs",
         "Snmp" => "SNMP monitoring",
+        "Undelivered" => "Undelivered messages",
         "About" => "About & updates",
         _ => "Overview"
     };
@@ -1125,7 +1296,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
         "Logging" => "What is recorded, where, and for how long.",
         "Logs" => "Application log, delivery audit trail and console activity.",
         "Snmp" => "Lets your monitoring system read how many messages were delivered and failed today.",
-        "About" => "Version, updates and license.",
+        "Undelivered" => "Messages the smart host did not accept: look at them, send them again or delete them.",
+        "About" => "Version, updates, backup and license.",
         _ => "State of the relay on this computer."
     };
 

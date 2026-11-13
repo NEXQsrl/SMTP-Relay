@@ -4,18 +4,23 @@ using System.Windows.Media;
 
 namespace SmtpRelay.Manager;
 
-/// <summary>Small modal dialog that asks for a new password twice, in the style of the console.</summary>
+/// <summary>Small modal dialog that asks for a password (twice when it is a new one), in the style of the console.</summary>
 public sealed class PasswordDialog : Window
 {
     private readonly PasswordBox _first = new() { Margin = new Thickness(0, 0, 0, 14) };
     private readonly PasswordBox _second = new() { Margin = new Thickness(0, 0, 0, 6) };
     private readonly TextBlock _error;
     private readonly Func<string, string?> _validate;
+    private readonly bool _confirm;
 
     /// <param name="validate">Returns what is wrong with the password, or null when it can be used.</param>
-    public PasswordDialog(Window owner, string title, string message, Func<string, string?> validate)
+    /// <param name="okText">Text of the button that accepts the password.</param>
+    /// <param name="confirm">True to ask for a new password twice; false to ask once for an existing one.</param>
+    public PasswordDialog(Window owner, string title, string message, Func<string, string?> validate,
+        string okText = "Change password", bool confirm = true)
     {
         _validate = validate;
+        _confirm = confirm;
         Owner = owner;
         Title = title;
         Width = 460;
@@ -35,10 +40,13 @@ public sealed class PasswordDialog : Window
             Margin = new Thickness(0, 0, 0, 16)
         });
 
-        root.Children.Add(new TextBlock { Text = "New password", Style = (Style)FindResource("Label") });
+        root.Children.Add(new TextBlock { Text = confirm ? "New password" : "Password", Style = (Style)FindResource("Label") });
         root.Children.Add(_first);
-        root.Children.Add(new TextBlock { Text = "Type it again", Style = (Style)FindResource("Label") });
-        root.Children.Add(_second);
+        if (confirm)
+        {
+            root.Children.Add(new TextBlock { Text = "Type it again", Style = (Style)FindResource("Label") });
+            root.Children.Add(_second);
+        }
 
         _error = new TextBlock
         {
@@ -51,7 +59,7 @@ public sealed class PasswordDialog : Window
 
         var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 14, 0, 0) };
         var cancel = new Button { Content = "Cancel", IsCancel = true, Style = (Style)FindResource("SecondaryButton"), Margin = new Thickness(0, 0, 8, 0) };
-        var ok = new Button { Content = "Change password", IsDefault = true, Style = (Style)FindResource("PrimaryButton") };
+        var ok = new Button { Content = okText, IsDefault = true, Style = (Style)FindResource("PrimaryButton") };
         ok.Click += (_, _) => Accept();
         buttons.Children.Add(cancel);
         buttons.Children.Add(ok);
@@ -65,7 +73,7 @@ public sealed class PasswordDialog : Window
 
     private void Accept()
     {
-        var problem = _first.Password != _second.Password
+        var problem = _confirm && _first.Password != _second.Password
             ? "The two passwords are different."
             : _validate(_first.Password);
         if (problem is null)
