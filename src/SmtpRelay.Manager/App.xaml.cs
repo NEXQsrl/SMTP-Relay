@@ -8,7 +8,7 @@ namespace SmtpRelay.Manager;
 
 public partial class App : Application
 {
-    private Mutex? _singleInstance;
+    private ConsoleLock? _consoleLock;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -40,14 +40,6 @@ public partial class App : Application
         }
 #endif
 
-        _singleInstance = new Mutex(initiallyOwned: true, @"Global\NEXQ.SmtpRelay.Manager", out bool isFirst);
-        if (!isFirst)
-        {
-            MessageBox.Show("The SMTP Relay console is already open.", AppInfo.ProductName, MessageBoxButton.OK, MessageBoxImage.Information);
-            Shutdown();
-            return;
-        }
-
         MainViewModel viewModel;
         try
         {
@@ -62,8 +54,20 @@ public partial class App : Application
             return;
         }
 
-        ManagerLog.Write($"Console {AppInfo.Version} opened.");
-        MainWindow = new MainWindow(viewModel);
+        // One administrator at a time changes the settings; a second console opens read-only.
+        _consoleLock = new ConsoleLock(viewModel.Options.DataDirectory);
+        if (_consoleLock.TryAcquire())
+        {
+            ManagerLog.Write($"Console {AppInfo.Version} opened.");
+        }
+        else
+        {
+            var holder = _consoleLock.ReadHolder();
+            viewModel.SetReadOnly(true, holder?.User, holder?.SinceUtc);
+            ManagerLog.Write($"Console {AppInfo.Version} opened read-only by {ConsoleLock.CurrentUser}: {holder?.User ?? "another administrator"} has it open for editing.");
+        }
+
+        MainWindow = new MainWindow(viewModel, _consoleLock);
         MainWindow.Show();
     }
 
@@ -76,7 +80,7 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
-        _singleInstance?.Dispose();
+        _consoleLock?.Dispose();
         base.OnExit(e);
     }
 }

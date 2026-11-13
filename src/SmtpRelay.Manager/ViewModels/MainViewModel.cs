@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.IO;
+using System.Net;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography.X509Certificates;
 using System.Text.Json;
@@ -26,8 +27,22 @@ public sealed record RelayUserRow(string Name, bool Enabled)
     public string ToggleText => Enabled ? "Disable" : "Enable";
 }
 
-/// <summary>An entry of the allowlist with what the audit trail knows about it.</summary>
-public sealed record AllowedIpRow(string Entry, string LastUsed, string Messages, bool Used);
+/// <summary>An entry of the allowlist with its DNS name and what the audit trail knows about it.</summary>
+public sealed record AllowedIpRow(string Entry, bool Enabled, string HostName, string LastUsed, string Messages)
+{
+    public string StateIcon => "\uEA18";
+    public string StateKind => Enabled ? "Ok" : "Off";
+    public string StateTip => Enabled ? "Allowed" : "Disabled: connections from here are refused";
+    public double TextOpacity => Enabled ? 1.0 : 0.5;
+    public string ToggleIcon => Enabled ? "\uE769" : "\uE768";
+    public string ToggleTip => Enabled ? "Disable: keep it in the list but refuse its connections" : "Enable again";
+}
+
+/// <summary>A period the chart of the Overview page can show.</summary>
+public sealed record ChartPeriod(string Name, TimeSpan Step, int Points, string LabelFormat)
+{
+    public override string ToString() => Name;
+}
 
 /// <summary>A message that was not delivered, as shown in the Undelivered page.</summary>
 public sealed class UndeliveredRow
@@ -64,6 +79,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         IsDemo = isDemo;
         Options = new RelayOptions();
         AllowedIps.CollectionChanged += (_, _) => RebuildAllowedIpRows();
+        DisabledIps.CollectionChanged += (_, _) => RebuildAllowedIpRows();
         Reload();
     }
 
@@ -77,6 +93,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public bool IsDemo { get; }
 
     public ObservableCollection<string> AllowedIps { get; } = new();
+    /// <summary>Entries of the allowlist that are switched off (kept in the settings, not applied).</summary>
+    public ObservableCollection<string> DisabledIps { get; } = new();
     public ObservableCollection<AllowedIpRow> AllowedIpRows { get; } = new();
     public ObservableCollection<UndeliveredRow> Undelivered { get; } = new();
     public ObservableCollection<string> SnmpManagers { get; } = new();
@@ -99,6 +117,10 @@ public sealed class MainViewModel : INotifyPropertyChanged
         AllowedIps.Clear();
         foreach (var entry in Options.Security.AllowedIps)
             AllowedIps.Add(entry);
+
+        DisabledIps.Clear();
+        foreach (var entry in Options.Security.DisabledIps)
+            DisabledIps.Add(entry);
 
         SnmpManagers.Clear();
         foreach (var entry in Options.Snmp.AllowedManagers)
@@ -130,6 +152,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private string Snapshot()
     {
         Options.Security.AllowedIps = AllowedIps.ToList();
+        Options.Security.DisabledIps = DisabledIps.ToList();
         Options.Snmp.AllowedManagers = SnmpManagers.ToList();
         return JsonSerializer.Serialize(Options);
     }
@@ -140,6 +163,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public void Revalidate()
     {
         Options.Security.AllowedIps = AllowedIps.ToList();
+        Options.Security.DisabledIps = DisabledIps.ToList();
         Options.Snmp.AllowedManagers = SnmpManagers.ToList();
         Replace(Errors, RelayOptionsValidator.Validate(Options));
 
@@ -201,11 +225,61 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     public bool HasErrors => Errors.Count > 0;
     public bool HasWarnings => Warnings.Count > 0;
-    public bool CanSave => IsDirty && !HasErrors;
+    public bool CanSave => CanEdit && IsDirty && !HasErrors;
 
-    public string FooterKind => HasErrors ? "Error" : IsDirty ? "Dirty" : "Ok";
+    // ----- one editor at a time --------------------------------------------------------------------------
 
-    public string FooterText => HasErrors
+    /// <summary>True when another administrator has the console open and this one can only look.</summary>
+    public bool IsReadOnly { get; private set; }
+    public bool CanEdit => !IsReadOnly;
+    public string? EditorName { get; private set; }
+    public DateTime? EditorSince { get; private set; }
+
+    /// <summary>Text of the tag at the top: short, the full name is in the dialog that the tag opens.</summary>
+    public string ReadOnlyText => EditorName is null
+        ? "Read-only"
+        : $"Read-only · {EditorName[(EditorName.LastIndexOf('\\') + 1)..]} is editing";
+
+    public void SetReadOnly(bool readOnly, string? editorName = null, DateTime? editorSinceUtc = null)
+    {
+        bool changed = IsReadOnly != readOnly || EditorName != editorName;
+        IsReadOnly = readOnly;
+        EditorName = readOnly ? editorName : null;
+        EditorSince = readOnly ? editorSinceUtc?.ToLocalTime() : null;
+        if (!changed)
+            return;
+
+        OnPropertyChanged(nameof(IsReadOnly));
+        OnPropertyChanged(nameof(CanEdit));
+        OnPropertyChanged(nameof(ReadOnlyText));
+        OnPropertyChanged(nameof(CanStart));
+        OnPropertyChanged(nameof(CanStop));
+        OnPropertyChanged(nameof(CanInstallUpdate));
+        OnPropertyChanged(nameof(CanResendAll));
+        Revalidate();
+    }
+
+    private void EnsureCanEdit()
+    {
+        if (IsReadOnly)
+            throw new InvalidOperationException("This console is read-only: another administrator has it open for editing.");
+    }
+
+    /// <summary>Time stamp of the settings file, to notice when the editor saves.</summary>
+    public DateTime SettingsFileStamp
+    {
+        get
+        {
+            try { return File.GetLastWriteTimeUtc(Path.Combine(_configDirectory, ConfigLoader.FileName)); }
+            catch (IOException) { return DateTime.MinValue; }
+        }
+    }
+
+    public string FooterKind => IsReadOnly ? "Dirty" : HasErrors ? "Error" : IsDirty ? "Dirty" : "Ok";
+
+    public string FooterText => IsReadOnly
+        ? "Read-only: another administrator is editing."
+        : HasErrors
         ? $"{Errors.Count} problem{(Errors.Count == 1 ? "" : "s")} to fix before saving: {Errors[0]}"
         : IsDirty
             ? "You have unsaved changes. The service uses them after it is restarted."
@@ -252,6 +326,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     /// <summary>Saves the settings. Returns false when they are not valid.</summary>
     public bool Save()
     {
+        EnsureCanEdit();
         Revalidate();
         if (HasErrors)
             return false;
@@ -559,6 +634,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
             return $"'{entry}' is not an IP address or a CIDR network.";
         if (AllowedIps.Contains(entry, StringComparer.OrdinalIgnoreCase))
             return $"'{entry}' is already in the list.";
+        if (DisabledIps.Contains(entry, StringComparer.OrdinalIgnoreCase))
+            return $"'{entry}' is already in the list, disabled: enable it there.";
 
         AllowedIps.Add(entry);
         Revalidate();
@@ -568,6 +645,18 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public void RemoveAllowedIp(string entry)
     {
         AllowedIps.Remove(entry);
+        DisabledIps.Remove(entry);
+        Revalidate();
+    }
+
+    /// <summary>Switches an entry off (it stays in the list and in the settings) or on again.</summary>
+    public void SetAllowedIpEnabled(string entry, bool enabled)
+    {
+        var (from, to) = enabled ? (DisabledIps, AllowedIps) : (AllowedIps, DisabledIps);
+        if (!from.Remove(entry))
+            return;
+        if (!to.Contains(entry, StringComparer.OrdinalIgnoreCase))
+            to.Add(entry);
         Revalidate();
     }
 
@@ -631,21 +720,164 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     private void RebuildAllowedIpRows()
     {
-        var rows = AllowedIps.Select(entry =>
+        AllowedIpRow Row(string entry, bool enabled)
         {
             var (delivered, failed, last) = _senders.For(entry);
             return new AllowedIpRow(
                 entry,
+                enabled,
+                _hostNames.TryGetValue(entry, out var name) ? name : "",
                 last is { } time ? time.ToLocalTime().ToString("yyyy-MM-dd HH:mm") : "Never",
-                failed > 0 ? $"{delivered:N0}  (+{failed:N0} failed)" : delivered.ToString("N0"),
-                last is not null);
-        }).ToList();
+                failed > 0 ? $"{delivered:N0}  (+{failed:N0} failed)" : delivered.ToString("N0"));
+        }
 
+        // Enabled entries first, then the ones that are switched off.
+        var rows = AllowedIps.Select(e => Row(e, true)).Concat(DisabledIps.Select(e => Row(e, false))).ToList();
         if (AllowedIpRows.SequenceEqual(rows))
             return;
         AllowedIpRows.Clear();
         foreach (var row in rows)
             AllowedIpRows.Add(row);
+    }
+
+    // ----- DNS names of the allowlist --------------------------------------------------------------------
+
+    private readonly Dictionary<string, string> _hostNames = new(StringComparer.OrdinalIgnoreCase);
+    private bool _resolvingNames;
+
+    /// <summary>
+    /// Looks up the DNS name (PTR record) of the single addresses of the allowlist that have not been looked
+    /// up yet. An address without a name, and a network, keep an empty name.
+    /// </summary>
+    public async Task ResolveHostNamesAsync()
+    {
+        if (IsDemo || _resolvingNames)
+            return;
+
+        var pending = AllowedIps.Concat(DisabledIps)
+            .Where(e => !_hostNames.ContainsKey(e) && IPAddress.TryParse(e, out _))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (pending.Count == 0)
+            return;
+
+        _resolvingNames = true;
+        try
+        {
+            var names = await Task.WhenAll(pending.Select(ReverseLookupAsync));
+            for (int i = 0; i < pending.Count; i++)
+                _hostNames[pending[i]] = names[i];
+            RebuildAllowedIpRows();
+        }
+        finally
+        {
+            _resolvingNames = false;
+        }
+    }
+
+    public void SetHostNames(IEnumerable<KeyValuePair<string, string>> names)
+    {
+        foreach (var (entry, name) in names)
+            _hostNames[entry] = name;
+        RebuildAllowedIpRows();
+    }
+
+    private static async Task<string> ReverseLookupAsync(string address)
+    {
+        try
+        {
+            var entry = await Dns.GetHostEntryAsync(IPAddress.Parse(address)).WaitAsync(TimeSpan.FromSeconds(4));
+            // Without a PTR record some resolvers give the address back: that is not a name.
+            return IPAddress.TryParse(entry.HostName, out _) ? "" : entry.HostName;
+        }
+        catch (Exception)
+        {
+            return ""; // no PTR record, no DNS, or no answer in time
+        }
+    }
+
+    // ----- chart of the Overview page --------------------------------------------------------------------
+
+    public static ChartPeriod[] ChartPeriods { get; } =
+    {
+        new("Last 24 hours", TimeSpan.FromHours(1), 24, "HH:mm"),
+        new("Last 7 days", TimeSpan.FromHours(6), 28, "ddd d"),
+        new("Last 30 days", TimeSpan.FromDays(1), 30, "MMM d")
+    };
+
+    private ChartPeriod _chartPeriod = ChartPeriods[0];
+    private bool _loadingChart;
+
+    public ChartPeriod SelectedChartPeriod
+    {
+        get => _chartPeriod;
+        set
+        {
+            if (value is null || _chartPeriod == value)
+                return;
+            _chartPeriod = value;
+            OnPropertyChanged();
+            _ = RefreshChartAsync();
+        }
+    }
+
+    public IReadOnlyList<int> ChartDelivered { get; private set; } = Array.Empty<int>();
+    public IReadOnlyList<int> ChartFailed { get; private set; } = Array.Empty<int>();
+    public IReadOnlyList<string> ChartLabels { get; private set; } = Array.Empty<string>();
+    public string ChartDeliveredTotal => ChartDelivered.Sum().ToString("N0");
+    public string ChartFailedTotal => ChartFailed.Sum().ToString("N0");
+
+    public string ChartNote => !Options.Logging.AuditTrail
+        ? "The chart is drawn from the audit trail, which is turned off (Logging & retention)."
+        : _chartPeriod.Step.TotalHours switch
+        {
+            <= 1 => "Messages per hour, from the audit trail.",
+            < 24 => "Messages every six hours, from the audit trail. Days older than the log retention are empty.",
+            _ => "Messages per day, from the audit trail. Days older than the log retention are empty."
+        };
+
+    /// <summary>Reads the audit trail in the background and fills the chart for the selected period.</summary>
+    public async Task RefreshChartAsync()
+    {
+        if (IsDemo || _loadingChart)
+            return;
+
+        _loadingChart = true;
+        try
+        {
+            var period = _chartPeriod;
+            var directory = Options.LogDirectory;
+
+            // The last point is the period that is running now.
+            long step = period.Step.Ticks;
+            var end = new DateTime((DateTime.Now.Ticks / step + 1) * step);
+            if (period.Step >= TimeSpan.FromDays(1))
+                end = DateTime.Today.AddDays(1);
+            var start = end - period.Step * period.Points;
+
+            var (delivered, failed) = await Task.Run(() => AuditTrail.ReadBuckets(directory, start, period.Step, period.Points));
+            if (period == _chartPeriod)
+                SetChart(delivered, failed, Enumerable.Range(0, period.Points).Select(i => (start + period.Step * i).ToString(period.LabelFormat)).ToArray());
+        }
+        finally
+        {
+            _loadingChart = false;
+        }
+    }
+
+    public void SetChart(IReadOnlyList<int> delivered, IReadOnlyList<int> failed, IReadOnlyList<string> labels)
+    {
+        if (ChartDelivered.SequenceEqual(delivered) && ChartFailed.SequenceEqual(failed) && ChartLabels.SequenceEqual(labels))
+            return;
+        ChartDelivered = delivered;
+        ChartFailed = failed;
+        ChartLabels = labels;
+        OnPropertyChanged(nameof(ChartDelivered));
+        OnPropertyChanged(nameof(ChartFailed));
+        OnPropertyChanged(nameof(ChartLabels));
+        OnPropertyChanged(nameof(ChartDeliveredTotal));
+        OnPropertyChanged(nameof(ChartFailedTotal));
+        OnPropertyChanged(nameof(ChartNote));
     }
 
     // ----- undelivered messages --------------------------------------------------------------------------
@@ -662,6 +894,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         };
 
     public bool HasUndelivered => Undelivered.Count > 0;
+    public bool CanResendAll => CanEdit && HasUndelivered;
 
     public void RefreshUndelivered()
     {
@@ -680,11 +913,13 @@ public sealed class MainViewModel : INotifyPropertyChanged
         }
         OnPropertyChanged(nameof(UndeliveredSummary));
         OnPropertyChanged(nameof(HasUndelivered));
+        OnPropertyChanged(nameof(CanResendAll));
     }
 
     /// <summary>Sends a spooled message to the smart host with its original envelope, then removes the copy.</summary>
     public async Task ResendAsync(UndeliveredRow row)
     {
+        EnsureCanEdit();
         var record = row.Message.Record;
         if (record.Recipients.Count == 0)
             throw new InvalidOperationException("The recipients of this message are not known.");
@@ -707,6 +942,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     public void DeleteUndelivered(UndeliveredRow row)
     {
+        EnsureCanEdit();
         Spool.Delete(row.Message);
         ManagerLog.Write($"Undelivered message deleted without sending: from={row.From} to={row.To} subject={row.Subject}.");
     }
@@ -722,6 +958,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     public BackupSummary RestoreBackup(string path, string password)
     {
+        EnsureCanEdit();
         var summary = SettingsBackup.Restore(path, _configDirectory, password);
         Reload();
         ManagerLog.Write($"Settings restored from {path}: backup of {summary.Computer}, {summary.CreatedUtc.ToLocalTime():yyyy-MM-dd HH:mm}, version {summary.ProductVersion} ({summary.Secrets} secrets, {summary.Users} users).");
@@ -926,6 +1163,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             OnPropertyChanged(nameof(ServiceDetail));
             OnPropertyChanged(nameof(IsServiceInstalled));
             OnPropertyChanged(nameof(IsServiceRunning));
+            OnPropertyChanged(nameof(IsServiceStopped));
             OnPropertyChanged(nameof(CanStart));
             OnPropertyChanged(nameof(CanStop));
         }
@@ -959,8 +1197,9 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     public bool IsServiceInstalled => ServiceState != ServiceState.NotInstalled;
     public bool IsServiceRunning => ServiceState == ServiceState.Running;
-    public bool CanStart => ServiceState == ServiceState.Stopped;
-    public bool CanStop => ServiceState == ServiceState.Running;
+    public bool CanStart => CanEdit && ServiceState == ServiceState.Stopped;
+    public bool CanStop => CanEdit && ServiceState == ServiceState.Running;
+    public bool IsServiceStopped => ServiceState == ServiceState.Stopped;
 
     public void RefreshService()
     {
@@ -976,6 +1215,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     private async Task RunServiceActionAsync(string action, Action work)
     {
+        EnsureCanEdit();
         var name = Options.ServiceName;
         try
         {
@@ -1158,7 +1398,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public string UpdateStatus { get; private set; } = "Not checked yet.";
     public string UpdateTitle => LatestRelease is null ? "" : $"Version {LatestRelease.Tag.TrimStart('v', 'V')} is available";
     public string UpdateNotes => LatestRelease?.Notes ?? "";
-    public bool CanInstallUpdate => UpdateAvailable && !IsInstallingUpdate && LatestRelease?.InstallerUrl is not null;
+    public bool CanInstallUpdate => CanEdit && UpdateAvailable && !IsInstallingUpdate && LatestRelease?.InstallerUrl is not null;
 
     public bool CheckUpdatesOnStartup
     {

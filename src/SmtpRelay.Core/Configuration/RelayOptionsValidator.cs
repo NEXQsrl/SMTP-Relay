@@ -55,6 +55,12 @@ public static partial class RelayOptionsValidator
                 errors.Add($"Security.AllowedIps: '{entry}' is not an IP address or a CIDR network.");
         }
 
+        foreach (var entry in o.Security.DisabledIps)
+        {
+            if (!IpAllowList.TryParse(entry, out _))
+                errors.Add($"Security.DisabledIps: '{entry}' is not an IP address or a CIDR network.");
+        }
+
         // Sign-in of the clients
         var auth = o.Security.Authentication;
         if (auth.Mode != InboundAuthMode.Disabled && o.Tls.Mode == InboundTlsMode.None && !auth.AllowWithoutTls)

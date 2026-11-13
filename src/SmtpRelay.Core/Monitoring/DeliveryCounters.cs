@@ -198,6 +198,57 @@ public static class AuditTrail
             since);
     }
 
+    /// <summary>
+    /// Counts the delivered and the failed messages in consecutive periods of the same length (for the chart
+    /// of the console). Period i starts at <paramref name="start"/> + i * <paramref name="size"/>, local time.
+    /// </summary>
+    public static (int[] Delivered, int[] Failed) ReadBuckets(string directory, DateTime start, TimeSpan size, int count)
+    {
+        var delivered = new int[count];
+        var failed = new int[count];
+        try
+        {
+            if (!Directory.Exists(directory) || count <= 0 || size <= TimeSpan.Zero)
+                return (delivered, failed);
+
+            var firstDay = DateOnly.FromDateTime(start).AddDays(-1); // a file is named after the day it was started
+            foreach (var file in Directory.EnumerateFiles(directory, "audit-*.log"))
+            {
+                var name = Path.GetFileNameWithoutExtension(file);
+                if (name.Length < 14 ||
+                    !DateOnly.TryParseExact(name.AsSpan(6, 8), "yyyyMMdd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var day) ||
+                    day < firstDay)
+                {
+                    continue;
+                }
+
+                using var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                using var reader = new StreamReader(stream, Encoding.UTF8);
+                string? line;
+                while ((line = reader.ReadLine()) is not null)
+                {
+                    if (Classify(line) is not { } ok || line.Length < 30 ||
+                        !DateTimeOffset.TryParseExact(line.AsSpan(0, 30), "yyyy-MM-dd HH:mm:ss.fff zzz", CultureInfo.InvariantCulture, DateTimeStyles.None, out var time))
+                    {
+                        continue;
+                    }
+
+                    double position = (time.LocalDateTime - start) / size;
+                    if (position < 0 || position >= count)
+                        continue;
+                    if (ok)
+                        delivered[(int)position]++;
+                    else
+                        failed[(int)position]++;
+                }
+            }
+        }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
+
+        return (delivered, failed);
+    }
+
     // "yyyy-MM-dd HH:mm:ss.fff +zz:zz EVENT client=<address> ...": the client is the first field after the event.
     private static bool TryReadClient(string line, out IPAddress address, out DateTimeOffset time)
     {

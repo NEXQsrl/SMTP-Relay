@@ -10,6 +10,12 @@ public sealed class SecurityOptions
     public List<string> AllowedIps { get; set; } = new();
 
     /// <summary>
+    /// Entries of the allowlist that are switched off: they are kept, with their place in the console, but the
+    /// relay does not accept connections from them. Same form as <see cref="AllowedIps"/>.
+    /// </summary>
+    public List<string> DisabledIps { get; set; } = new();
+
+    /// <summary>
     /// When true and the allowlist is empty, every connection is refused (fail-closed).
     /// When false and the allowlist is empty, every connection is accepted (open relay: not recommended).
     /// </summary>

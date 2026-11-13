@@ -83,12 +83,27 @@
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <StackPanel>
                     <TextBlock Text="{Binding PageTitle}" Style="{StaticResource H1}" />
                     <TextBlock Text="{Binding PageSubtitle}" Style="{StaticResource Sub}" Margin="0,4,0,0" />
                 </StackPanel>
-                <Border Grid.Column="1" VerticalAlignment="Top" CornerRadius="15" Height="30" Padding="12,0,14,0"
+                <Button Grid.Column="1" VerticalAlignment="Top" Margin="0,0,10,0" Cursor="Hand" Click="ReadOnlyTag_Click" FocusVisualStyle="{x:Null}"
+                        Visibility="{Binding IsReadOnly, Converter={StaticResource Vis}}"
+                        ToolTip="Click to see who is changing the settings and to ask them to close their console.">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Border CornerRadius="15" Height="30" Padding="12,0,14,0" Background="{StaticResource WarnSoft}" BorderThickness="1" BorderBrush="{StaticResource Warn}">
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                    <TextBlock Text="&#xE72E;" FontFamily="{StaticResource Icons}" FontSize="12" Foreground="{StaticResource Warn}" VerticalAlignment="Center" Margin="0,0,8,0" />
+                                    <TextBlock Text="{Binding ReadOnlyText}" Foreground="#92400E" FontSize="12.5" FontWeight="SemiBold" />
+                                </StackPanel>
+                            </Border>
+                        </ControlTemplate>
+                    </Button.Template>
+                </Button>
+                <Border Grid.Column="2" VerticalAlignment="Top" CornerRadius="15" Height="30" Padding="12,0,14,0"
                         Background="{Binding ServiceStateKind, Converter={StaticResource Kind}, ConverterParameter=soft}"
                         BorderThickness="1" BorderBrush="{StaticResource Line}">
                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
@@ -133,43 +148,80 @@
                                 <ColumnDefinition Width="*" />
                             </Grid.ColumnDefinitions>
 
-                            <Border Style="{StaticResource CardBorder}" Margin="0">
-                                <StackPanel>
-                                    <TextBlock Text="WINDOWS SERVICE" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TextMuted}" />
-                                    <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
-                                        <Ellipse Width="12" Height="12" Fill="{Binding ServiceStateKind, Converter={StaticResource Kind}}" Margin="0,3,10,0" />
-                                        <TextBlock Text="{Binding ServiceStateText}" FontSize="24" FontWeight="SemiBold" Foreground="{StaticResource Text}" />
+                            <Border Style="{StaticResource CardBorder}" Margin="0" Padding="18,12">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="WINDOWS SERVICE" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TextMuted}" />
+                                        <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                                            <Ellipse Width="10" Height="10" Fill="{Binding ServiceStateKind, Converter={StaticResource Kind}}" Margin="0,2,8,0" VerticalAlignment="Center" />
+                                            <TextBlock Text="{Binding ServiceStateText}" FontSize="19" FontWeight="SemiBold" Foreground="{StaticResource Text}" />
+                                        </StackPanel>
+                                        <TextBlock Text="{Binding ServiceDetail}" Style="{StaticResource Sub}" FontSize="12" Margin="0,1,0,0" TextTrimming="CharacterEllipsis" />
                                     </StackPanel>
-                                    <TextBlock Text="{Binding ServiceDetail}" Style="{StaticResource Sub}" Margin="0,4,0,14" />
-                                    <StackPanel Orientation="Horizontal">
-                                        <Button Content="Start" Style="{StaticResource PrimaryButton}" Click="Start_Click" Margin="0,0,8,0"
-                                                Visibility="{Binding CanStart, Converter={StaticResource Vis}}" />
-                                        <Button Content="Restart" Style="{StaticResource SecondaryButton}" Click="Restart_Click" Margin="0,0,8,0"
-                                                Visibility="{Binding CanStop, Converter={StaticResource Vis}}" />
-                                        <Button Content="Stop" Style="{StaticResource DangerButton}" Click="Stop_Click"
-                                                Visibility="{Binding CanStop, Converter={StaticResource Vis}}" />
-                                        <Button Content="Install the service" Style="{StaticResource PrimaryButton}" Click="Install_Click"
+                                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="10,0,0,0">
+                                        <Button Content="&#xE768;" Style="{StaticResource IconButton}" Width="38" Height="34" BorderBrush="{StaticResource Primary}" Foreground="{StaticResource Primary}"
+                                                ToolTip="Start the service" Click="Start_Click" IsEnabled="{Binding CanEdit}"
+                                                Visibility="{Binding IsServiceStopped, Converter={StaticResource Vis}}" />
+                                        <Button Content="&#xE72C;" Style="{StaticResource IconButton}" Width="38" Height="34" BorderBrush="{StaticResource LineStrong}" Margin="0,0,8,0"
+                                                ToolTip="Restart the service" Click="Restart_Click" IsEnabled="{Binding CanEdit}"
+                                                Visibility="{Binding IsServiceRunning, Converter={StaticResource Vis}}" />
+                                        <Button Content="&#xE71A;" Style="{StaticResource IconButton}" Width="38" Height="34" BorderBrush="{StaticResource LineStrong}" Foreground="{StaticResource Danger}"
+                                                ToolTip="Stop the service" Click="Stop_Click" IsEnabled="{Binding CanEdit}"
+                                                Visibility="{Binding IsServiceRunning, Converter={StaticResource Vis}}" />
+                                        <Button Content="Install the service" Style="{StaticResource PrimaryButton}" Click="Install_Click" IsEnabled="{Binding CanEdit}"
                                                 Visibility="{Binding IsServiceInstalled, Converter={StaticResource Vis}, ConverterParameter=invert}" />
                                     </StackPanel>
-                                </StackPanel>
+                                </Grid>
                             </Border>
 
-                            <Border Grid.Column="2" Style="{StaticResource CardBorder}" Margin="0">
+                            <Border Grid.Column="2" Style="{StaticResource CardBorder}" Margin="0" Padding="18,12">
                                 <StackPanel>
                                     <TextBlock Text="DELIVERED TODAY" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TextMuted}" />
-                                    <TextBlock Text="{Binding DeliveredToday}" FontSize="34" FontWeight="SemiBold" Foreground="{StaticResource Ok}" Margin="0,6,0,0" />
-                                    <TextBlock Text="messages forwarded to the smart host" Style="{StaticResource Sub}" />
+                                    <TextBlock Text="{Binding DeliveredToday}" FontSize="26" FontWeight="SemiBold" Foreground="{StaticResource Ok}" Margin="0,1,0,0" />
+                                    <TextBlock Text="forwarded to the smart host" Style="{StaticResource Sub}" FontSize="12" />
                                 </StackPanel>
                             </Border>
 
-                            <Border Grid.Column="4" Style="{StaticResource CardBorder}" Margin="0">
+                            <Border Grid.Column="4" Style="{StaticResource CardBorder}" Margin="0" Padding="18,12">
                                 <StackPanel>
                                     <TextBlock Text="FAILED TODAY" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TextMuted}" />
-                                    <TextBlock Text="{Binding FailedToday}" FontSize="34" FontWeight="SemiBold" Foreground="{StaticResource Danger}" Margin="0,6,0,0" />
-                                    <TextBlock Text="messages refused or not delivered" Style="{StaticResource Sub}" />
+                                    <TextBlock Text="{Binding FailedToday}" FontSize="26" FontWeight="SemiBold" Foreground="{StaticResource Danger}" Margin="0,1,0,0" />
+                                    <TextBlock Text="refused or not delivered" Style="{StaticResource Sub}" FontSize="12" />
                                 </StackPanel>
                             </Border>
                         </Grid>
+
+                        <Border Style="{StaticResource CardBorder}">
+                            <StackPanel>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="Messages" Style="{StaticResource H2}" />
+                                        <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
+                                            <Rectangle Width="14" Height="3" Fill="{StaticResource Ok}" VerticalAlignment="Center" RadiusX="1.5" RadiusY="1.5" />
+                                            <TextBlock Margin="6,0,18,0" FontSize="12.5" Foreground="{StaticResource TextSoft}">
+                                                <Run Text="Delivered " /><Run Text="{Binding ChartDeliveredTotal, Mode=OneWay}" FontWeight="SemiBold" />
+                                            </TextBlock>
+                                            <Rectangle Width="14" Height="3" Fill="{StaticResource Danger}" VerticalAlignment="Center" RadiusX="1.5" RadiusY="1.5" />
+                                            <TextBlock Margin="6,0,0,0" FontSize="12.5" Foreground="{StaticResource TextSoft}">
+                                                <Run Text="Failed " /><Run Text="{Binding ChartFailedTotal, Mode=OneWay}" FontWeight="SemiBold" />
+                                            </TextBlock>
+                                        </StackPanel>
+                                    </StackPanel>
+                                    <ComboBox Grid.Column="1" Width="170" VerticalAlignment="Top" ItemsSource="{Binding ChartPeriods}"
+                                              SelectedItem="{Binding SelectedChartPeriod}" />
+                                </Grid>
+                                <local:TrendChart Height="190" Margin="0,10,0,0" Delivered="{Binding ChartDelivered}" Failed="{Binding ChartFailed}" Labels="{Binding ChartLabels}" />
+                                <TextBlock Style="{StaticResource Hint}" Margin="0,4,0,0" Text="{Binding ChartNote}" />
+                            </StackPanel>
+                        </Border>
 
                         <Border Style="{StaticResource CardBorder}">
                             <StackPanel>
@@ -246,7 +298,7 @@
 
                 <!-- ============ Listener ============ -->
                 <ScrollViewer VerticalScrollBarVisibility="Auto" Visibility="{Binding Page, Converter={StaticResource PageVis}, ConverterParameter=Listener}">
-                    <StackPanel Margin="32,0,32,16">
+                    <StackPanel Margin="32,0,32,16" IsEnabled="{Binding CanEdit}">
                         <Border Style="{StaticResource CardBorder}">
                             <StackPanel>
                                 <TextBlock Text="Network" Style="{StaticResource H2}" />
@@ -318,7 +370,7 @@
 
                 <!-- ============ Allowed senders ============ -->
                 <ScrollViewer VerticalScrollBarVisibility="Auto" Visibility="{Binding Page, Converter={StaticResource PageVis}, ConverterParameter=Access}">
-                    <StackPanel Margin="32,0,32,16">
+                    <StackPanel Margin="32,0,32,16" IsEnabled="{Binding CanEdit}">
                         <Border Style="{StaticResource CardBorder}">
                             <StackPanel>
                                 <TextBlock Text="IP allowlist" Style="{StaticResource H2}" />
@@ -346,14 +398,16 @@
                                                 <Grid Height="34">
                                                     <Grid.ColumnDefinitions>
                                                         <ColumnDefinition Width="28" />
-                                                        <ColumnDefinition Width="*" />
-                                                        <ColumnDefinition Width="150" />
                                                         <ColumnDefinition Width="170" />
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="128" />
+                                                        <ColumnDefinition Width="128" />
                                                         <ColumnDefinition Width="70" />
                                                     </Grid.ColumnDefinitions>
                                                     <TextBlock Grid.Column="1" Text="ADDRESS OR NETWORK" FontSize="10.5" FontWeight="SemiBold" Foreground="{StaticResource TextMuted}" VerticalAlignment="Center" />
-                                                    <TextBlock Grid.Column="2" Text="LAST USED" FontSize="10.5" FontWeight="SemiBold" Foreground="{StaticResource TextMuted}" VerticalAlignment="Center" />
-                                                    <TextBlock Grid.Column="3" Text="MESSAGES" FontSize="10.5" FontWeight="SemiBold" Foreground="{StaticResource TextMuted}" VerticalAlignment="Center" />
+                                                    <TextBlock Grid.Column="2" Text="DNS NAME" FontSize="10.5" FontWeight="SemiBold" Foreground="{StaticResource TextMuted}" VerticalAlignment="Center" />
+                                                    <TextBlock Grid.Column="3" Text="LAST USED" FontSize="10.5" FontWeight="SemiBold" Foreground="{StaticResource TextMuted}" VerticalAlignment="Center" />
+                                                    <TextBlock Grid.Column="4" Text="MESSAGES" FontSize="10.5" FontWeight="SemiBold" Foreground="{StaticResource TextMuted}" VerticalAlignment="Center" />
                                                 </Grid>
                                             </Border>
                                             <ItemsControl ItemsSource="{Binding AllowedIpRows}">
@@ -363,17 +417,26 @@
                                                             <Grid Height="40">
                                                                 <Grid.ColumnDefinitions>
                                                                     <ColumnDefinition Width="28" />
-                                                                    <ColumnDefinition Width="*" />
-                                                                    <ColumnDefinition Width="150" />
                                                                     <ColumnDefinition Width="170" />
+                                                                    <ColumnDefinition Width="*" />
+                                                                    <ColumnDefinition Width="128" />
+                                                                    <ColumnDefinition Width="128" />
                                                                     <ColumnDefinition Width="70" />
                                                                 </Grid.ColumnDefinitions>
-                                                                <TextBlock Text="&#xEA18;" Style="{StaticResource Icon}" Foreground="{StaticResource Ok}" />
-                                                                <TextBlock Grid.Column="1" Text="{Binding Entry}" FontFamily="{StaticResource Mono}" FontSize="13" VerticalAlignment="Center" />
-                                                                <TextBlock Grid.Column="2" Text="{Binding LastUsed}" FontSize="12.5" VerticalAlignment="Center" Foreground="{StaticResource TextSoft}" />
-                                                                <TextBlock Grid.Column="3" Text="{Binding Messages}" FontSize="12.5" VerticalAlignment="Center" Foreground="{StaticResource TextSoft}" />
-                                                                <Button Grid.Column="4" Content="Remove" Style="{StaticResource LinkButton}" Foreground="{StaticResource Danger}"
-                                                                        VerticalAlignment="Center" HorizontalAlignment="Right" Click="RemoveIp_Click" Tag="{Binding Entry}" />
+                                                                <TextBlock Text="{Binding StateIcon}" Style="{StaticResource Icon}" ToolTip="{Binding StateTip}"
+                                                                           Foreground="{Binding StateKind, Converter={StaticResource Kind}}" />
+                                                                <TextBlock Grid.Column="1" Text="{Binding Entry}" FontFamily="{StaticResource Mono}" FontSize="13" VerticalAlignment="Center"
+                                                                           Opacity="{Binding TextOpacity}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Entry}" />
+                                                                <TextBlock Grid.Column="2" Text="{Binding HostName}" FontSize="12.5" VerticalAlignment="Center" Margin="0,0,12,0"
+                                                                           Foreground="{StaticResource TextSoft}" Opacity="{Binding TextOpacity}" TextTrimming="CharacterEllipsis" ToolTip="{Binding HostName}" />
+                                                                <TextBlock Grid.Column="3" Text="{Binding LastUsed}" FontSize="12.5" VerticalAlignment="Center" Foreground="{StaticResource TextSoft}" Opacity="{Binding TextOpacity}" />
+                                                                <TextBlock Grid.Column="4" Text="{Binding Messages}" FontSize="12.5" VerticalAlignment="Center" Foreground="{StaticResource TextSoft}" Opacity="{Binding TextOpacity}" />
+                                                                <StackPanel Grid.Column="5" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                                                                    <Button Content="{Binding ToggleIcon}" ToolTip="{Binding ToggleTip}" Style="{StaticResource IconButton}"
+                                                                            Click="ToggleIp_Click" Tag="{Binding}" />
+                                                                    <Button Content="&#xE74D;" ToolTip="Remove from the list" Style="{StaticResource IconButton}" Foreground="{StaticResource Danger}"
+                                                                            Click="RemoveIp_Click" Tag="{Binding}" />
+                                                                </StackPanel>
                                                             </Grid>
                                                         </Border>
                                                     </DataTemplate>
@@ -504,7 +567,7 @@
 
                 <!-- ============ Smart host ============ -->
                 <ScrollViewer VerticalScrollBarVisibility="Auto" Visibility="{Binding Page, Converter={StaticResource PageVis}, ConverterParameter=SmartHost}">
-                    <StackPanel Margin="32,0,32,16">
+                    <StackPanel Margin="32,0,32,16" IsEnabled="{Binding CanEdit}">
                         <Border Style="{StaticResource CardBorder}">
                             <StackPanel>
                                 <TextBlock Text="How the relay signs in" Style="{StaticResource H2}" />
@@ -740,7 +803,7 @@
 
                 <!-- ============ Inbound TLS ============ -->
                 <ScrollViewer VerticalScrollBarVisibility="Auto" Visibility="{Binding Page, Converter={StaticResource PageVis}, ConverterParameter=Tls}">
-                    <StackPanel Margin="32,0,32,16">
+                    <StackPanel Margin="32,0,32,16" IsEnabled="{Binding CanEdit}">
                         <Border Style="{StaticResource CardBorder}">
                             <StackPanel>
                                 <TextBlock Text="Encryption for clients" Style="{StaticResource H2}" />
@@ -805,7 +868,7 @@
 
                 <!-- ============ Logging ============ -->
                 <ScrollViewer VerticalScrollBarVisibility="Auto" Visibility="{Binding Page, Converter={StaticResource PageVis}, ConverterParameter=Logging}">
-                    <StackPanel Margin="32,0,32,16">
+                    <StackPanel Margin="32,0,32,16" IsEnabled="{Binding CanEdit}">
                         <Border Style="{StaticResource CardBorder}">
                             <StackPanel>
                                 <TextBlock Text="What is recorded" Style="{StaticResource H2}" />
@@ -848,7 +911,7 @@
                                     <StackPanel>
                                         <TextBlock Text="Keep for (days)" Style="{StaticResource Label}" />
                                         <TextBox Text="{Binding LogRetentionDays, UpdateSourceTrigger=PropertyChanged}" />
-                                        <TextBlock Style="{StaticResource Hint}" Text="Empty = no time limit." />
+                                        <TextBlock Style="{StaticResource Hint}" Text="Empty = no time limit. The chart of the Overview page and the figures of Allowed senders cover these days." />
                                     </StackPanel>
                                     <StackPanel Grid.Column="2">
                                         <TextBlock Text="Max files of each kind" Style="{StaticResource Label}" />
@@ -949,7 +1012,7 @@
                                     <StackPanel Grid.Column="1" Orientation="Horizontal">
                                         <Button Content="Refresh" Style="{StaticResource SecondaryButton}" Click="RefreshUndelivered_Click" Margin="0,0,8,0" />
                                         <Button Content="Open folder" Style="{StaticResource SecondaryButton}" Click="OpenSpoolFolder_Click" Margin="0,0,8,0" />
-                                        <Button Content="Resend all" Style="{StaticResource PrimaryButton}" Click="ResendAll_Click" IsEnabled="{Binding HasUndelivered}" />
+                                        <Button Content="Resend all" Style="{StaticResource PrimaryButton}" Click="ResendAll_Click" IsEnabled="{Binding CanResendAll}" />
                                     </StackPanel>
                                 </Grid>
 
@@ -980,9 +1043,11 @@
                                                         <TextBlock Margin="0,5,0,0" FontSize="12" Foreground="{StaticResource TextSoft}" TextWrapping="Wrap" Text="{Binding Reason}" />
                                                     </StackPanel>
                                                     <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top" Margin="16,0,0,0">
-                                                        <Button Content="Resend" Style="{StaticResource LinkButton}" Margin="0,0,16,0" Click="ResendOne_Click" Tag="{Binding}" />
+                                                        <Button Content="Resend" Style="{StaticResource LinkButton}" Margin="0,0,16,0" Click="ResendOne_Click" Tag="{Binding}"
+                                                                IsEnabled="{Binding DataContext.CanEdit, RelativeSource={RelativeSource AncestorType=Window}}" />
                                                         <Button Content="Open" Style="{StaticResource LinkButton}" Margin="0,0,16,0" Click="OpenUndelivered_Click" Tag="{Binding}" />
-                                                        <Button Content="Delete" Style="{StaticResource LinkButton}" Foreground="{StaticResource Danger}" Click="DeleteUndelivered_Click" Tag="{Binding}" />
+                                                        <Button Content="Delete" Style="{StaticResource LinkButton}" Foreground="{StaticResource Danger}" Click="DeleteUndelivered_Click" Tag="{Binding}"
+                                                                IsEnabled="{Binding DataContext.CanEdit, RelativeSource={RelativeSource AncestorType=Window}}" />
                                                     </StackPanel>
                                                 </Grid>
                                             </Border>
@@ -997,7 +1062,7 @@
                 </ScrollViewer>
 
                 <ScrollViewer VerticalScrollBarVisibility="Auto" Visibility="{Binding Page, Converter={StaticResource PageVis}, ConverterParameter=Snmp}">
-                    <StackPanel Margin="32,0,32,16">
+                    <StackPanel Margin="32,0,32,16" IsEnabled="{Binding CanEdit}">
                         <Border Style="{StaticResource CardBorder}">
                             <StackPanel>
                                 <TextBlock Text="SNMP agent" Style="{StaticResource H2}" />
@@ -1154,25 +1219,12 @@
 
                         <Border Style="{StaticResource CardBorder}">
                             <StackPanel>
-                                <TextBlock Text="Log retention" Style="{StaticResource H2}" />
-                                <TextBlock Style="{StaticResource Sub}" Margin="0,0,0,12"
-                                           Text="How many days the application log and the delivery audit trail are kept. Older files are deleted automatically. It is the same setting as in Logging &amp; retention, where the size of the files is set too." />
-                                <StackPanel Orientation="Horizontal">
-                                    <TextBox Width="110" Text="{Binding LogRetentionDays, UpdateSourceTrigger=PropertyChanged}" />
-                                    <TextBlock Text="days" VerticalAlignment="Center" Margin="10,0,0,0" Foreground="{StaticResource TextSoft}" />
-                                </StackPanel>
-                                <TextBlock Style="{StaticResource Hint}" Text="Empty = no time limit. Saved with the other settings; the service applies it after a restart. The Allowed senders page counts the messages over these days." />
-                            </StackPanel>
-                        </Border>
-
-                        <Border Style="{StaticResource CardBorder}">
-                            <StackPanel>
                                 <TextBlock Text="Backup and restore" Style="{StaticResource H2}" />
                                 <TextBlock Style="{StaticResource Sub}" Margin="0,0,0,14"
                                            Text="Saves the settings, the stored secrets (passwords, client secret, SNMP community) and the users of the relay in one file protected by a password, to move the relay to another server or to keep a copy. Certificates, logs and undelivered messages are not included." />
                                 <StackPanel Orientation="Horizontal">
                                     <Button Content="Back up settings…" Style="{StaticResource PrimaryButton}" Click="Backup_Click" Margin="0,0,8,0" />
-                                    <Button Content="Restore from a backup…" Style="{StaticResource SecondaryButton}" Click="Restore_Click" />
+                                    <Button Content="Restore from a backup…" Style="{StaticResource SecondaryButton}" Click="Restore_Click" IsEnabled="{Binding CanEdit}" />
                                 </StackPanel>
                                 <TextBlock Style="{StaticResource Hint}" Margin="0,10,0,0"
                                            Text="On the new server: install SMTP Relay, open this page, restore the backup, then import the certificates if you use them and restart the service. Restore replaces every setting, secret and user of this installation." />

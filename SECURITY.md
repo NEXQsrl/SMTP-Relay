@@ -104,6 +104,14 @@ SMTP Relay **has not had an independent security review**. Do not expose the lis
   configured number of days. Turn the spool off if you must not keep message content on the server.
 - Secrets and access tokens are never logged.
 
+### The console
+
+- The console runs as administrator. When it shows the allowlist it asks the DNS server of the computer for the
+  name (PTR record) of each single address: the addresses of your devices are sent to that DNS server, and a
+  name shown in the table is only what the DNS answers, not a proof of identity.
+- "One editor at a time" avoids two administrators overwriting each other's changes. It is a convenience between
+  administrators, not an access control: any administrator of the computer can still change the settings file.
+
 ### Program files, setup and updates
 
 - Every program file, the setup and the uninstaller are **Authenticode-signed by NEXQ S.r.l.** (self-signed

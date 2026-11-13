@@ -109,6 +109,15 @@ SMTP Relay **non ha avuto una revisione di sicurezza indipendente**. Non esporre
   messaggi sul server.
 - Segreti e token di accesso non vengono mai scritti nei log.
 
+### La console
+
+- La console viene eseguita come amministratore. Quando mostra l'elenco chiede al server DNS del computer il nome
+  (record PTR) di ogni indirizzo singolo: gli indirizzi dei tuoi apparati vengono inviati a quel server DNS, e un
+  nome mostrato nella tabella è solo ciò che il DNS risponde, non una prova di identità.
+- "Un solo amministratore in modifica" evita che due amministratori si sovrascrivano le modifiche. È una comodità
+  fra amministratori, non un controllo di accesso: qualsiasi amministratore del computer può comunque modificare
+  il file delle impostazioni.
+
 ### File del programma, setup e aggiornamenti
 
 - Ogni file del programma, il setup e il programma di disinstallazione hanno una **firma Authenticode di

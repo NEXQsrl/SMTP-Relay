@@ -21,7 +21,7 @@
 </p>
 
 <p align="center">
-  <img alt="Versione 2.3.0" src="https://img.shields.io/badge/versione-2.3.0-2563eb">
+  <img alt="Versione 2.4.0" src="https://img.shields.io/badge/versione-2.4.0-2563eb">
   <img alt="Windows Server e Windows 10/11" src="https://img.shields.io/badge/Windows-Server%202016%2B%20%7C%2010%20%7C%2011-0f766e">
   <img alt="Microsoft 365 OAuth2" src="https://img.shields.io/badge/Microsoft%20365-OAuth2-7c3aed">
   <img alt="Self-hosted" src="https://img.shields.io/badge/self--hosted-on%20premises-475569">
@@ -79,7 +79,7 @@ SMTP Relay si mette tra quegli apparati e il sistema di posta:
   </tr>
 </table>
 
-<sub>Le immagini mostrano l'interfaccia reale della versione 2.3.0 con dati di esempio (indirizzi, tenant e messaggi sono esempi). L'interfaccia è in inglese.</sub>
+<sub>Le immagini mostrano l'interfaccia reale della versione 2.4.0 con dati di esempio (indirizzi, tenant e messaggi sono esempi). L'interfaccia è in inglese.</sub>
 
 ## Funzionalità
 
@@ -127,7 +127,11 @@ SMTP Relay si mette tra quegli apparati e il sistema di posta:
   credenziali in chiaro, segreto mancante).
 - **Messaggi non consegnati**: una pagina elenca i messaggi che lo smart host non ha preso, con mittente,
   destinatari e motivo, e li reinvia o li elimina.
-- **Chi usa il relay**: per ogni indirizzo o rete dell'elenco, quando ha inviato l'ultima volta e quanti messaggi.
+- **Chi usa il relay**: per ogni indirizzo o rete dell'elenco, il nome DNS, quando ha inviato l'ultima volta e
+  quanti messaggi. Una voce si può disattivare senza rimuoverla.
+- **Grafico dei messaggi** consegnati e falliti nell'ultimo giorno, settimana o mese, nella pagina Overview.
+- **Più amministratori**: una console alla volta modifica le impostazioni; le altre si aprono in sola lettura e
+  possono chiedere a chi sta modificando di chiudere.
 - **Backup e ripristino**: impostazioni, segreti e utenti in un file cifrato con password, per spostare il relay
   su un altro server.
 - **Audit delle consegne**: una riga per messaggio, in un file dedicato, protetta dalla falsificazione dei log (gli
@@ -146,9 +150,9 @@ SMTP Relay si mette tra quegli apparati e il sistema di posta:
 Serve un Windows Server (o Windows 10/11) raggiungibile dai tuoi apparati, e i diritti di amministratore.
 Nient'altro: il runtime .NET è incluso nel setup.
 
-**1. Scarica** `SmtpRelay-Setup-2.3.0.exe` dall'
+**1. Scarica** `SmtpRelay-Setup-2.4.0.exe` dall'
 [ultima versione](https://github.com/NEXQsrl/SMTP-Relay/releases/latest). La release elenca lo SHA-256 di ogni file
-(`SHA256SUMS.txt`): controllalo con `Get-FileHash .\SmtpRelay-Setup-2.3.0.exe -Algorithm SHA256`.
+(`SHA256SUMS.txt`): controllalo con `Get-FileHash .\SmtpRelay-Setup-2.4.0.exe -Algorithm SHA256`.
 
 **2. Considera attendibile la firma (una volta per server).** I file sono firmati da *NEXQ S.r.l.* con un
 certificato autofirmato. Windows lo considera attendibile solo dopo che lo hai importato. Il certificato pubblico è
@@ -156,7 +160,7 @@ dentro la firma del file; estrailo, controlla che l'identificazione personale (t
 `989A5C82203AB19B6DB29FC447E8CB5EBEEB60D8`, poi importalo (PowerShell come amministratore):
 
 ```powershell
-$cert = (Get-AuthenticodeSignature .\SmtpRelay-Setup-2.3.0.exe).SignerCertificate
+$cert = (Get-AuthenticodeSignature .\SmtpRelay-Setup-2.4.0.exe).SignerCertificate
 $cert.Thumbprint          # deve essere 989A5C82203AB19B6DB29FC447E8CB5EBEEB60D8
 Export-Certificate -Cert $cert -FilePath .\NEXQ-CodeSigning.cer | Out-Null
 Import-Certificate -FilePath .\NEXQ-CodeSigning.cer -CertStoreLocation Cert:\LocalMachine\Root
@@ -193,7 +197,7 @@ mostrare *Running*.
 ### Installazione automatica
 
 ```powershell
-.\SmtpRelay-Setup-2.3.0.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG="C:\Temp\smtprelay-setup.log"
+.\SmtpRelay-Setup-2.4.0.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG="C:\Temp\smtprelay-setup.log"
 ```
 
 Poi copia il tuo `appsettings.json` nella cartella di installazione, salva il segreto e avvia il servizio:
@@ -345,7 +349,7 @@ conoscono finché non glielo dici tu.
 | Cosa vedi | Perché | Cosa fare |
 |---|---|---|
 | *Autore sconosciuto* nella richiesta UAC | Il certificato non è ancora attendibile su questo computer | Importalo come al [passo 2](#installazione-in-cinque-minuti). La richiesta mostrerà *Autore verificato: NEXQ S.r.l.* |
-| *PC protetto da Windows* (SmartScreen) | Il file è stato scaricato da Internet e non ha reputazione; una firma autofirmata non ne costruisce | *Ulteriori informazioni > Esegui comunque*, oppure esegui prima `Unblock-File .\SmtpRelay-Setup-2.3.0.exe` dopo averne controllato lo SHA-256 |
+| *PC protetto da Windows* (SmartScreen) | Il file è stato scaricato da Internet e non ha reputazione; una firma autofirmata non ne costruisce | *Ulteriori informazioni > Esegui comunque*, oppure esegui prima `Unblock-File .\SmtpRelay-Setup-2.4.0.exe` dopo averne controllato lo SHA-256 |
 | *Accesso negato* all'avvio del setup o dei programmi, evento 1121 di Microsoft Defender | La regola di riduzione della superficie di attacco *Blocca l'esecuzione dei file eseguibili a meno che non soddisfino un criterio di prevalenza, età o elenco attendibile* blocca qualsiasi programma nuovo | Aggiungi un'esclusione (sotto), oppure in Microsoft Defender per endpoint crea un indicatore **Consenti** per il certificato |
 | L'antivirus mette in quarantena o blocca un file | Euristiche su un programma nuovo, poco diffuso, che ascolta su una porta | Controlla lo SHA-256 con quello della release, poi consenti il certificato dell'autore o escludi la cartella di installazione |
 
@@ -353,7 +357,7 @@ Esclusione per le regole di riduzione della superficie di attacco di Microsoft D
 amministratore; la prima riga serve solo mentre esegui il setup):
 
 ```powershell
-Add-MpPreference -AttackSurfaceReductionOnlyExclusions "C:\Install\SmtpRelay-Setup-2.3.0.exe"
+Add-MpPreference -AttackSurfaceReductionOnlyExclusions "C:\Install\SmtpRelay-Setup-2.4.0.exe"
 Add-MpPreference -AttackSurfaceReductionOnlyExclusions "C:\Program Files\SMTP Relay"
 ```
 
@@ -448,14 +452,47 @@ salvate dalle versioni precedenti alla 2.3.0 non hanno la busta: i destinatari s
 
 ## Chi usa il relay
 
-La tabella di **Allowed senders** ha due colonne in più per ogni indirizzo o rete: **Last used**, l'ultima volta
-che ha inviato un messaggio, e **Messages**, quanti messaggi sono stati inoltrati allo smart host (con accanto
-quelli falliti). Una rete somma i suoi indirizzi. Una voce con *Never* non ha inviato nulla nel periodo: è una
-buona candidata alla rimozione.
+La tabella di **Allowed senders** mostra, per ogni indirizzo o rete:
+
+| Colonna | Cosa mostra |
+|---|---|
+| **DNS name** | Il nome di un indirizzo singolo, dal suo record PTR nel tuo DNS. Vuoto quando non c'è, e per le reti |
+| **Last used** | L'ultima volta che ha inviato un messaggio |
+| **Messages** | Quanti messaggi sono stati inoltrati allo smart host, con accanto quelli falliti. Una rete somma i suoi indirizzi |
+
+Una voce con *Never* non ha inviato nulla nel periodo: è una buona candidata alla rimozione. Le due icone in fondo
+alla riga agiscono sulla voce, ed entrambe chiedono conferma:
+
+- **Disable** (pausa) tiene la voce nell'elenco ma ne rifiuta le connessioni; **Enable** (play) le accetta di
+  nuovo. Serve per spegnere un apparato per un po', o per verificare che a nessuno manchi una voce prima di
+  rimuoverla.
+- **Remove** (cestino) elimina la voce.
+
+Come ogni modifica all'elenco, hanno effetto dopo **Save and restart service**.
 
 I valori sono letti dall'audit delle consegne, quindi coprono i giorni di conservazione dei log (31 per
 impostazione predefinita) e sono vuoti quando l'audit è disattivato. Per contare su un periodo più lungo, aumenta i
-giorni in **Logging & retention** (o in **About & updates > Log retention**, che è la stessa impostazione).
+giorni in **Logging & retention**. La console chiede i nomi al tuo server DNS quando si apre la pagina; il servizio
+non lo fa mai.
+
+## Il grafico della pagina Overview
+
+Sotto lo stato del servizio, la pagina **Overview** disegna i messaggi consegnati e falliti nel tempo: le ultime
+24 ore ora per ora, oppure gli ultimi 7 o 30 giorni dal selettore a destra. È disegnato dall'audit, quindi i 30
+giorni sono completi solo se i log vengono conservati così a lungo.
+
+## Più amministratori
+
+Solo una console alla volta può modificare le impostazioni. Quando un amministratore apre la console mentre un
+altro l'ha aperta sullo stesso server (ad esempio in un'altra sessione di Desktop remoto), la seconda console si
+apre in **sola lettura**: si possono guardare tutte le pagine, i log e i messaggi non consegnati, non si può
+modificare nulla, e un'etichetta *Read-only* in alto dice chi sta modificando.
+
+- Fai clic sull'etichetta per chiedere all'altro amministratore di chiudere. Vede un messaggio con il tuo nome e
+  sceglie se chiudere; se preferisce tenere aperta la console, ti viene comunicato.
+- Quando la sua console si chiude, la tua chiede se passare alla modifica. Rilegge allora le impostazioni, così
+  parti da ciò che è stato salvato.
+- Una console in sola lettura mostra ciò che l'altro salva, dopo pochi secondi.
 
 ## Backup e spostamento su un altro server
 
@@ -540,6 +577,7 @@ La console scrive `appsettings.json` per te. Ogni impostazione si può anche def
 | `Listener.MaxRecipients` | `100` | Destinatari per messaggio |
 | `Listener.MaxConcurrentSessions` | `50` | Sessioni servite contemporaneamente |
 | `Security.AllowedIps` | `127.0.0.1`, `::1` | Indirizzi e reti CIDR che possono inviare |
+| `Security.DisabledIps` | vuoto | Voci dell'elenco disattivate: conservate, ma non possono inviare |
 | `Security.RejectWhenAllowListEmpty` | `true` | Con l'elenco vuoto rifiuta tutti |
 | `Security.Authentication.Mode` | `Disabled` | Accesso dei client: `Disabled`, `Optional`, `Required` |
 | `Security.Authentication.AllowFromAnyAddress` | `false` | Gli utenti che si autenticano possono connettersi da fuori elenco |
@@ -613,6 +651,12 @@ e la regola del firewall vengono rimossi. Il setup chiede se eliminare anche imp
 impostazione predefinita vengono conservati.
 
 ## Stato del progetto
+
+La versione 2.4.0 aggiunge il grafico della pagina Overview, il nome DNS e la disattivazione nell'elenco, e la
+console in sola lettura per un secondo amministratore. I dati su cui si basano sono coperti da test automatici;
+**due console aperte da due amministratori in due sessioni dello stesso server non sono state provate su un server
+reale** (i test eseguono il blocco fra due thread). La conservazione dei log si imposta ora solo in
+**Logging & retention**.
 
 La versione 2.3.0 aggiunge la pagina Undelivered con il reinvio, le colonne di utilizzo dell'elenco e il backup
 delle impostazioni. Le tre funzioni sono coperte da test automatici sui file e sul listener reale; **i pulsanti

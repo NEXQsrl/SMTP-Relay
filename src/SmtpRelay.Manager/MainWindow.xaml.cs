@@ -17,15 +17,21 @@ public partial class MainWindow : Window
     private readonly MainViewModel _vm;
     private readonly DispatcherTimer _editTimer;
     private readonly DispatcherTimer _statusTimer;
+    private readonly ConsoleLock? _lock;
     private int _statusTicks;
+    private bool _lockPromptOpen;
+    private bool _declinedTakeover;
+    private DateTime _settingsStamp;
 
-    public MainWindow(MainViewModel viewModel)
+    public MainWindow(MainViewModel viewModel, ConsoleLock? consoleLock = null)
     {
         InitializeComponent();
         _vm = viewModel;
+        _lock = consoleLock;
+        _settingsStamp = _vm.SettingsFileStamp;
         DataContext = _vm;
 
-        _vm.AllowedIps.CollectionChanged += (_, _) => UpdateEmptyIpText();
+        _vm.AllowedIpRows.CollectionChanged += (_, _) => UpdateEmptyIpText();
         UpdateEmptyIpText();
         _vm.SnmpManagers.CollectionChanged += (_, _) => UpdateEmptyManagerText();
         UpdateEmptyManagerText();
@@ -57,8 +63,13 @@ public partial class MainWindow : Window
             return;
         try
         {
+            if (_vm.Page == "Overview" && (force || _statusTicks % 10 == 0))
+                await _vm.RefreshChartAsync();
             if (_vm.Page == "Access" && (force || _statusTicks % 10 == 0))
+            {
                 await _vm.RefreshSenderActivityAsync();
+                await _vm.ResolveHostNamesAsync();
+            }
             if (_vm.Page == "Undelivered" && (force || _statusTicks % 3 == 0))
                 _vm.RefreshUndelivered();
         }
@@ -76,6 +87,7 @@ public partial class MainWindow : Window
         _editTimer.Start();
         _statusTimer.Start();
         RefreshStatus();
+        RefreshPageData(force: true);
 
         if (_vm.Options.Updates.CheckOnStartup)
             await _vm.CheckForUpdatesAsync();
@@ -95,6 +107,7 @@ public partial class MainWindow : Window
 
     private void RefreshStatus()
     {
+        CheckConsoleLock();
         _vm.RefreshService();
         if (_vm.Page == "Overview")
             _vm.RefreshStats();
@@ -107,7 +120,133 @@ public partial class MainWindow : Window
     }
 
     private void UpdateEmptyIpText()
-        => EmptyIpText.Visibility = _vm.AllowedIps.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        => EmptyIpText.Visibility = _vm.AllowedIpRows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+
+    // ----- one editor at a time --------------------------------------------------------------------------
+
+    /// <summary>
+    /// Read-only console: notices when the editor closes and offers to take over; shows the settings the
+    /// editor saves. Editor: shows the request of another administrator to close.
+    /// </summary>
+    private void CheckConsoleLock()
+    {
+        if (_lock is null || _lockPromptOpen)
+            return;
+
+        _lockPromptOpen = true;
+        try
+        {
+            if (_vm.IsReadOnly)
+                CheckAsReader(_lock);
+            else if (_lock.TakeRequest() is { } request)
+                AnswerCloseRequest(_lock, request);
+        }
+        finally
+        {
+            _lockPromptOpen = false;
+        }
+    }
+
+    private void CheckAsReader(ConsoleLock consoleLock)
+    {
+        if (consoleLock.TakeDeclined() is { } editor)
+            ShowInfo($"{editor} is keeping the console open for now.\n\nYou will be asked to switch to editing as soon as it is closed.");
+
+        if (!_declinedTakeover && consoleLock.TryAcquire())
+        {
+            var answer = MessageBox.Show(this,
+                $"{_vm.EditorName ?? "The other administrator"} has closed the console.\n\n" +
+                "Do you want to switch this console to editing? The settings are read again, so that you start from what was saved.",
+                Title, MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.Yes);
+            if (answer == MessageBoxResult.Yes)
+            {
+                BecomeEditor();
+            }
+            else
+            {
+                consoleLock.Release();
+                _declinedTakeover = true; // do not ask again; the Read-only tag switches when clicked
+            }
+            return;
+        }
+
+        // Still read-only: show who is editing now, and what they have saved.
+        var holder = consoleLock.ReadHolder();
+        _vm.SetReadOnly(true, holder?.User, holder?.SinceUtc);
+        var stamp = _vm.SettingsFileStamp;
+        if (stamp != _settingsStamp)
+        {
+            _settingsStamp = stamp;
+            try { _vm.Reload(); }
+            catch (Exception) { /* being written right now: read at the next check */ }
+        }
+    }
+
+    private void BecomeEditor()
+    {
+        try { _vm.Reload(); }
+        catch (Exception ex) { ShowError("The settings could not be read again:\n" + ex.Message); }
+        _settingsStamp = _vm.SettingsFileStamp;
+        _declinedTakeover = false;
+        _vm.SetReadOnly(false);
+        ManagerLog.Write("Console switched from read-only to editing.");
+    }
+
+    private void AnswerCloseRequest(ConsoleLock consoleLock, CloseRequest request)
+    {
+        Activate();
+        var answer = MessageBox.Show(this,
+            $"{request.User} needs to change the settings and asks you to close this console.\n\n" +
+            "Only one administrator at a time can change the settings; the others see them read-only.\n\n" +
+            "Close the console now?" + (_vm.IsDirty ? " You have unsaved changes: you will be asked about them." : ""),
+            Title, MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No);
+        if (answer == MessageBoxResult.Yes)
+        {
+            ManagerLog.Write($"Console closed at the request of {request.User}.");
+            Close();
+        }
+        else
+        {
+            consoleLock.Decline();
+        }
+    }
+
+    private void ReadOnlyTag_Click(object sender, RoutedEventArgs e)
+    {
+        if (_lock is null || !_vm.IsReadOnly || _lockPromptOpen)
+            return;
+
+        _lockPromptOpen = true;
+        try
+        {
+            // Nobody is editing any more (the offer to switch was declined before): switch now.
+            if (_lock.TryAcquire())
+            {
+                BecomeEditor();
+                return;
+            }
+
+            var holder = _lock.ReadHolder();
+            var who = holder?.User ?? "another administrator";
+            var since = holder is null ? "" : $" since {holder.SinceUtc.ToLocalTime():HH:mm}";
+            var answer = MessageBox.Show(this,
+                $"The console is open for editing by {who}{since}.\n\n" +
+                "Only one administrator at a time can change the settings, so this console is read-only: you can look at every page, " +
+                "the logs and the undelivered messages, but not change anything.\n\n" +
+                $"Ask {who} to close their console? They see a message with your name and choose whether to close.",
+                Title, MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No);
+            if (answer != MessageBoxResult.Yes)
+                return;
+
+            _lock.RequestClose();
+            _declinedTakeover = false;
+            ShowInfo($"The request was sent to {who}.\n\nAs soon as their console closes you will be asked to switch to editing.");
+        }
+        finally
+        {
+            _lockPromptOpen = false;
+        }
+    }
 
     private void UpdateEmptyUserText()
         => EmptyUserText.Visibility = _vm.Users.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -237,8 +376,32 @@ public partial class MainWindow : Window
 
     private void RemoveIp_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is Button { Tag: string entry })
-            _vm.RemoveAllowedIp(entry);
+        if (sender is not Button { Tag: AllowedIpRow row })
+            return;
+
+        var name = row.HostName.Length > 0 ? $" ({row.HostName})" : "";
+        var answer = MessageBox.Show(this,
+            $"Remove {row.Entry}{name} from the allowlist?\n\n" +
+            (row.Enabled ? "Its connections will be refused after you save and restart the service. " : "") +
+            "To keep it in the list without accepting its connections, disable it instead.",
+            Title, MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
+        if (answer == MessageBoxResult.Yes)
+            _vm.RemoveAllowedIp(row.Entry);
+    }
+
+    private void ToggleIp_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: AllowedIpRow row })
+            return;
+
+        var name = row.HostName.Length > 0 ? $" ({row.HostName})" : "";
+        var answer = MessageBox.Show(this,
+            row.Enabled
+                ? $"Disable {row.Entry}{name}?\n\nIt stays in the list, but its connections are refused after you save and restart the service."
+                : $"Enable {row.Entry}{name} again?\n\nIts connections are accepted after you save and restart the service.",
+            Title, MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.Yes);
+        if (answer == MessageBoxResult.Yes)
+            _vm.SetAllowedIpEnabled(row.Entry, !row.Enabled);
     }
 
     private void ImportIis_Click(object sender, RoutedEventArgs e)

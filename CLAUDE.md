@@ -98,7 +98,16 @@ the copy when the same Message-ID is delivered later. The console lists them (Un
 its own `UpstreamSender`, so a resend is logged in `manager-*.log` and is not in the audit trail or the counters.
 
 Console data read from disk: the usage columns of the allowlist come from `AuditTrail.ReadSenders` (every audit
-file still kept, read in the background when the page opens). `Configuration/SettingsBackup` writes and restores
+file still kept, read in the background when the page opens) and the chart of the Overview page (`TrendChart`,
+drawn by hand: there is no charting library) from `AuditTrail.ReadBuckets`. The DNS names of the allowlist are PTR
+lookups made by the console only. `Security.DisabledIps` holds the entries switched off in the console: the
+service never reads it, it builds its list from `AllowedIps` alone.
+
+One editor at a time: `Manager/Services/ConsoleLock` holds the machine-wide mutex `Global\NEXQ.SmtpRelay.Manager`
+(created with an ACL for Administrators, or other sessions could not open it). A console that does not get it runs
+with `MainViewModel.IsReadOnly`: the settings pages are disabled through `CanEdit` and the mutating methods of the
+view model throw. Holder, close request and reply are small JSON files in the data folder; `MainWindow` polls them
+on the status timer. A mutex belongs to a thread: acquire and release it on the UI thread only. `Configuration/SettingsBackup` writes and restores
 the `.srbackup` file (appsettings.json, secrets in clear text, users.json; AES-256-GCM, key from PBKDF2); the CLI
 verbs are `backup` and `restore`.
 

@@ -21,7 +21,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version 2.3.0" src="https://img.shields.io/badge/version-2.3.0-2563eb">
+  <img alt="Version 2.4.0" src="https://img.shields.io/badge/version-2.4.0-2563eb">
   <img alt="Windows Server and Windows 10/11" src="https://img.shields.io/badge/Windows-Server%202016%2B%20%7C%2010%20%7C%2011-0f766e">
   <img alt="Microsoft 365 OAuth2" src="https://img.shields.io/badge/Microsoft%20365-OAuth2-7c3aed">
   <img alt="Self-hosted" src="https://img.shields.io/badge/self--hosted-on%20premises-475569">
@@ -77,7 +77,7 @@ SMTP Relay sits between those devices and your mail system:
   </tr>
 </table>
 
-<sub>The screenshots show the real interface of version 2.3.0 with sample data (addresses, tenants and messages are examples).</sub>
+<sub>The screenshots show the real interface of version 2.4.0 with sample data (addresses, tenants and messages are examples).</sub>
 
 ## Features
 
@@ -122,7 +122,11 @@ SMTP Relay sits between those devices and your mail system:
   credentials in clear text, missing secret).
 - **Undelivered messages**: a page lists the messages the smart host did not take, with sender, recipients and
   reason, and sends them again or deletes them.
-- **Who uses the relay**: for every address or network of the allowlist, when it last sent and how many messages.
+- **Who uses the relay**: for every address or network of the allowlist, its DNS name, when it last sent and how
+  many messages. An entry can be disabled without removing it.
+- **Chart of the messages** delivered and failed over the last day, week or month, in the Overview page.
+- **Several administrators**: one console at a time changes the settings; the others open read-only and can ask
+  the editor to close.
 - **Backup and restore**: settings, secrets and users in one file encrypted with a password, to move the relay to
   another server.
 - **Delivery audit trail**: one line per message, in its own file, safe against log forging (line breaks in
@@ -140,16 +144,16 @@ SMTP Relay sits between those devices and your mail system:
 You need a Windows Server (or Windows 10/11) that your devices can reach, and administrator rights on it.
 Nothing else: the .NET runtime is included in the setup.
 
-**1. Download** `SmtpRelay-Setup-2.3.0.exe` from the
+**1. Download** `SmtpRelay-Setup-2.4.0.exe` from the
 [latest release](https://github.com/NEXQsrl/SMTP-Relay/releases/latest). The release lists the SHA-256 of every file
-(`SHA256SUMS.txt`): check it with `Get-FileHash .\SmtpRelay-Setup-2.3.0.exe -Algorithm SHA256`.
+(`SHA256SUMS.txt`): check it with `Get-FileHash .\SmtpRelay-Setup-2.4.0.exe -Algorithm SHA256`.
 
 **2. Trust the signature (once per server).** The files are signed by *NEXQ S.r.l.* with a self-signed certificate.
 Windows trusts it only after you import it. The public certificate is inside the signature of the file; extract it,
 check that its thumbprint is `989A5C82203AB19B6DB29FC447E8CB5EBEEB60D8`, then import it (elevated PowerShell):
 
 ```powershell
-$cert = (Get-AuthenticodeSignature .\SmtpRelay-Setup-2.3.0.exe).SignerCertificate
+$cert = (Get-AuthenticodeSignature .\SmtpRelay-Setup-2.4.0.exe).SignerCertificate
 $cert.Thumbprint          # must be 989A5C82203AB19B6DB29FC447E8CB5EBEEB60D8
 Export-Certificate -Cert $cert -FilePath .\NEXQ-CodeSigning.cer | Out-Null
 Import-Certificate -FilePath .\NEXQ-CodeSigning.cer -CertStoreLocation Cert:\LocalMachine\Root
@@ -189,7 +193,7 @@ if you configured a certificate). Each message appears in the **Logs** page with
 ### Unattended installation
 
 ```powershell
-.\SmtpRelay-Setup-2.3.0.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG="C:\Temp\smtprelay-setup.log"
+.\SmtpRelay-Setup-2.4.0.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG="C:\Temp\smtprelay-setup.log"
 ```
 
 Then copy your `appsettings.json` to the installation folder, store the secret and start the service:
@@ -338,7 +342,7 @@ no public authority vouches for it, so Windows and security products do not know
 | What you see | Why | What to do |
 |---|---|---|
 | *Unknown publisher* in the UAC prompt | The certificate is not trusted on this computer yet | Import it as in [step 2](#install-in-five-minutes). The prompt then shows *Verified publisher: NEXQ S.r.l.* |
-| *Windows protected your PC* (SmartScreen) | The file was downloaded from the Internet and has no reputation; a self-signed signature does not build any | *More info > Run anyway*, or first run `Unblock-File .\SmtpRelay-Setup-2.3.0.exe` after checking its SHA-256 |
+| *Windows protected your PC* (SmartScreen) | The file was downloaded from the Internet and has no reputation; a self-signed signature does not build any | *More info > Run anyway*, or first run `Unblock-File .\SmtpRelay-Setup-2.4.0.exe` after checking its SHA-256 |
 | *Access denied* when starting the setup or the programs, event 1121 of Microsoft Defender | The attack surface reduction rule *Block executable files from running unless they meet a prevalence, age, or trusted list criterion* blocks any new program | Add an exclusion (below), or in Microsoft Defender for Endpoint create an **Allow** indicator for the certificate |
 | The antivirus quarantines or blocks a file | Heuristics on a new, rarely seen program that listens on a port | Check the SHA-256 against the release, then allow the publisher certificate or exclude the installation folder |
 
@@ -346,7 +350,7 @@ Exclusion for the Microsoft Defender attack surface reduction rules (elevated Po
 only while you run the setup):
 
 ```powershell
-Add-MpPreference -AttackSurfaceReductionOnlyExclusions "C:\Install\SmtpRelay-Setup-2.3.0.exe"
+Add-MpPreference -AttackSurfaceReductionOnlyExclusions "C:\Install\SmtpRelay-Setup-2.4.0.exe"
 Add-MpPreference -AttackSurfaceReductionOnlyExclusions "C:\Program Files\SMTP Relay"
 ```
 
@@ -437,14 +441,45 @@ Copies saved by versions before 2.3.0 have no envelope: their recipients are rea
 
 ## Who uses the relay
 
-The table of **Allowed senders** has two more columns for each address or network: **Last used**, the last time
-it sent a message, and **Messages**, how many messages it had forwarded to the smart host (with the failed ones
-next to it). A network adds up its addresses. An entry that says *Never* has not sent anything in the period: a
-good candidate for removal.
+The table of **Allowed senders** tells you, for each address or network:
+
+| Column | What it shows |
+|---|---|
+| **DNS name** | The name of a single address, from its PTR record in your DNS. Empty when there is none, and for networks |
+| **Last used** | The last time it sent a message |
+| **Messages** | How many messages were forwarded to the smart host, with the failed ones next to it. A network adds up its addresses |
+
+An entry that says *Never* has not sent anything in the period: a good candidate for removal. The two icons at
+the end of the row act on the entry, and both ask for confirmation:
+
+- **Disable** (pause) keeps the entry in the list but refuses its connections; **Enable** (play) accepts them
+  again. Useful to switch a device off for a while, or to check that nobody misses an entry before removing it.
+- **Remove** (bin) deletes the entry.
+
+As with every change to the allowlist, they take effect after **Save and restart service**.
 
 The figures are read from the delivery audit trail, so they cover the days the logs are kept (31 by default) and
-are empty when the audit trail is off. To count over a longer period, raise the days in **Logging & retention**
-(or in **About & updates > Log retention**, which is the same setting).
+are empty when the audit trail is off. To count over a longer period, raise the days in **Logging & retention**.
+The console asks your DNS server for the names when the page is opened; the service never does.
+
+## The chart of the Overview page
+
+Under the state of the service, the **Overview** page draws the messages delivered and failed over time: the last
+24 hours hour by hour, or the last 7 or 30 days from the selector on the right. It is drawn from the audit trail,
+so the 30 days are complete only if the logs are kept that long.
+
+## Several administrators
+
+Only one console at a time can change the settings. When an administrator opens the console while another one has
+it open on the same server (for example in another Remote Desktop session), the second console opens
+**read-only**: every page, the logs and the undelivered messages can be looked at, nothing can be changed, and a
+*Read-only* tag at the top says who is editing.
+
+- Click the tag to ask the other administrator to close. They see a message with your name and choose whether to
+  close; if they prefer to keep the console open, you are told.
+- When their console closes, yours asks whether to switch to editing. It then reads the settings again, so that
+  you start from what was saved.
+- A read-only console shows what the editor saves, a few seconds later.
 
 ## Backup and moving to another server
 
@@ -529,6 +564,7 @@ The console writes `appsettings.json` for you. Every setting can also be set wit
 | `Listener.MaxRecipients` | `100` | Recipients per message |
 | `Listener.MaxConcurrentSessions` | `50` | Sessions served at the same time |
 | `Security.AllowedIps` | `127.0.0.1`, `::1` | Addresses and CIDR networks allowed to send |
+| `Security.DisabledIps` | empty | Entries of the allowlist that are switched off: kept, but not allowed to send |
 | `Security.RejectWhenAllowListEmpty` | `true` | Empty list refuses everyone |
 | `Security.Authentication.Mode` | `Disabled` | Sign-in of the clients: `Disabled`, `Optional`, `Required` |
 | `Security.Authentication.AllowFromAnyAddress` | `false` | Users who sign in can connect from outside the allowlist |
@@ -601,6 +637,11 @@ folder and removes the old one. Data in `C:\ProgramData\SmtpRelay` does not move
 firewall rule are removed. The setup asks whether to delete settings, secrets and logs too; by default they are kept.
 
 ## Project status
+
+Version 2.4.0 adds the chart of the Overview page, the DNS name and the disable switch in the allowlist, and the
+read-only console for a second administrator. The data behind them is covered by automated tests; **two consoles
+opened by two administrators in two sessions of the same server have not been tried on a real server** (the tests
+run the lock between two threads). The retention of the logs is now set in **Logging & retention** only.
 
 Version 2.3.0 adds the Undelivered page with resend, the usage columns of the allowlist and the backup of the
 settings. The three are covered by automated tests on the files and on the real listener; **the buttons of the

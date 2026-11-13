@@ -33,7 +33,8 @@ internal static class Screenshots
                 Listener = { Port = 25, ServerName = "relay.contoso.local" },
                 Security =
                 {
-                    AllowedIps = { "127.0.0.1", "192.168.10.0/24", "192.168.20.15", "10.20.0.0/16" },
+                    AllowedIps = { "127.0.0.1", "192.168.10.44", "192.168.10.61", "10.20.4.12", "10.20.0.0/16" },
+                    DisabledIps = { "192.168.20.15" },
                     Authentication = { Mode = InboundAuthMode.Optional }
                 },
                 Tls = { Mode = InboundTlsMode.StartTlsOptional, CertificateThumbprint = "3F2A9C41D07B5E86A1C4F0B92D7E6A5538C1D4E9" },
@@ -61,6 +62,17 @@ internal static class Screenshots
                 new SenderActivity(IPAddress.Parse("192.168.10.61"), 302, 2, at.AddHours(-2)),
                 new SenderActivity(IPAddress.Parse("10.20.4.12"), 9120, 6, at)
             }, new DateOnly(2026, 10, 12)));
+            vm.SetHostNames(new Dictionary<string, string>
+            {
+                ["127.0.0.1"] = "localhost",
+                ["192.168.10.44"] = "mfp-reception.contoso.local",
+                ["192.168.10.61"] = "nas01.contoso.local",
+                ["10.20.4.12"] = "erp-app02.contoso.local",
+                ["192.168.20.15"] = ""
+            });
+            var hours = new[] { 2, 0, 1, 0, 0, 3, 14, 41, 96, 132, 118, 87, 64, 102, 127, 110, 93, 71, 38, 22, 15, 9, 6, 4 };
+            vm.SetChart(hours, hours.Select((h, i) => i is 9 or 14 ? 2 : i == 11 ? 1 : 0).ToArray(),
+                Enumerable.Range(0, 24).Select(i => at.LocalDateTime.Date.AddHours(11 + i).ToString("HH:mm")).ToArray());
             vm.SetUndelivered(new[]
             {
                 new SpooledMessage(@"C:\ProgramData\SmtpRelay\failed\failed-20261111-3f2a9c41d07b5e86.eml", new SpoolRecord
@@ -117,9 +129,9 @@ internal static class Screenshots
                 if (page == "About")
                 {
                     vm.SetRelease(new ReleaseInfo(
-                        new Version(2, 4, 0, 0), "v2.4.0",
+                        new Version(2, 5, 0, 0), "v2.5.0",
                         "- Faster delivery: the connection to the smart host is reused between messages\n- New: more figures for your monitoring system\n- Fixes and updated dependencies",
-                        AppInfo.ReleasesUrl, AppInfo.ReleasesUrl + "/download/v2.4.0/SmtpRelay-Setup-2.4.0.exe", "SmtpRelay-Setup-2.4.0.exe", 1, null), newer: true);
+                        AppInfo.ReleasesUrl, AppInfo.ReleasesUrl + "/download/v2.5.0/SmtpRelay-Setup-2.5.0.exe", "SmtpRelay-Setup-2.5.0.exe", 1, null), newer: true);
                 }
 
                 vm.Page = page;
