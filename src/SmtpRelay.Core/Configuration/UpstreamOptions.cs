@@ -14,7 +14,7 @@ public enum UpstreamAuthMode
     /// <summary>No authentication (for example an Exchange Online connector that trusts the public IP).</summary>
     Anonymous,
 
-    /// <summary>Azure Communication Services Email over SMTP, with a Microsoft Entra application (XOAUTH2).</summary>
+    /// <summary>Azure Communication Services Email, through the Email API of the resource (HTTPS) with its connection string.</summary>
     AzureCommunicationServices
 }
 
@@ -52,7 +52,7 @@ public sealed class UpstreamOptions
 {
     public UpstreamAuthMode Mode { get; set; } = UpstreamAuthMode.Microsoft365;
 
-    /// <summary>Destination SMTP host (for example smtp.office365.com).</summary>
+    /// <summary>Destination SMTP host (for example smtp.office365.com). Not used by Azure Communication Services.</summary>
     public string Host { get; set; } = "smtp.office365.com";
 
     public int Port { get; set; } = 587;
@@ -80,23 +80,20 @@ public sealed class UpstreamOptions
     public Microsoft365Options Microsoft365 { get; set; } = new();
     public AzureCommunicationOptions AzureCommunication { get; set; } = new();
 
+    /// <summary>
+    /// False when the mode does not talk SMTP to the smart host (Azure Communication Services): Host, Port and
+    /// Security are then ignored.
+    /// </summary>
+    [JsonIgnore]
+    public bool UsesSmtp => Mode != UpstreamAuthMode.AzureCommunicationServices;
+
     /// <summary>The Entra application of the current mode, or null when the mode does not use one.</summary>
     [JsonIgnore]
-    public EntraApplicationOptions? EntraApplication => Mode switch
-    {
-        UpstreamAuthMode.Microsoft365 => Microsoft365,
-        UpstreamAuthMode.AzureCommunicationServices => AzureCommunication,
-        _ => null
-    };
+    public EntraApplicationOptions? EntraApplication => Mode == UpstreamAuthMode.Microsoft365 ? Microsoft365 : null;
 
     /// <summary>User name sent with the access token (XOAUTH2), or null when the mode does not use a token.</summary>
     [JsonIgnore]
-    public string? TokenUserName => Mode switch
-    {
-        UpstreamAuthMode.Microsoft365 => Microsoft365.SenderUsername,
-        UpstreamAuthMode.AzureCommunicationServices => AzureCommunication.SmtpUsername,
-        _ => null
-    };
+    public string? TokenUserName => Mode == UpstreamAuthMode.Microsoft365 ? Microsoft365.SenderUsername : null;
 }
 
 public sealed class BasicAuthOptions
@@ -140,19 +137,15 @@ public sealed class Microsoft365Options : EntraApplicationOptions
     public string SenderUsername { get; set; } = "";
 }
 
-public sealed class AzureCommunicationOptions : EntraApplicationOptions
+/// <summary>
+/// Azure Communication Services Email. The relay signs its requests with the access key of the resource, taken
+/// from the connection string the Azure portal shows under Settings > Keys.
+/// </summary>
+public sealed class AzureCommunicationOptions
 {
-    public const string DefaultHost = "smtp.azurecomm.net";
-
-    public AzureCommunicationOptions()
-    {
-        ClientSecretName = "AcsClientSecret";
-        Scope = "https://communication.azure.com/.default";
-    }
-
     /// <summary>
-    /// The SMTP Username created on the Communication Services resource and linked to the Entra application
-    /// (Azure portal, resource, "SMTP Usernames").
+    /// Name of the secret (encrypted store) that holds the connection string of the Communication Services
+    /// resource: <c>endpoint=https://...;accesskey=...</c>.
     /// </summary>
-    public string SmtpUsername { get; set; } = "";
+    public string ConnectionStringSecret { get; set; } = "AcsConnectionString";
 }

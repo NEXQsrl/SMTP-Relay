@@ -753,6 +753,26 @@ public partial class MainWindow : Window
     private void StoreClientSecret_Click(object sender, RoutedEventArgs e)
         => StoreSecret(_vm.EntraApp.ClientSecretName, ClientSecretBox);
 
+    private void StoreAcsConnectionString_Click(object sender, RoutedEventArgs e)
+    {
+        if (AcsConnectionStringBox.Password.Length == 0)
+        {
+            ShowInfo("Paste the connection string first.");
+            AcsConnectionStringBox.Focus();
+            return;
+        }
+
+        try
+        {
+            _vm.SaveAcsConnectionString(AcsConnectionStringBox.Password);
+            AcsConnectionStringBox.Clear();
+        }
+        catch (Exception ex)
+        {
+            ShowError("The connection string was not stored:\n" + ex.Message);
+        }
+    }
+
     private void StoreCommunity_Click(object sender, RoutedEventArgs e)
         => StoreSecret(_vm.Options.Snmp.CommunitySecret, CommunityBox);
 
@@ -939,13 +959,15 @@ public partial class MainWindow : Window
         }
 
         TestButton.IsEnabled = TestMailButton.IsEnabled = false;
-        ShowTestResult(true, $"Connecting to {_vm.Options.Upstream.Host}:{_vm.Options.Upstream.Port}…");
+        ShowTestResult(true, $"Connecting to {_vm.UpstreamTarget}…");
         try
         {
             await _vm.TestConnectionAsync();
             ShowTestResult(true, _vm.IsAnonymous
                 ? "Connection succeeded."
-                : "Connection and authentication succeeded.");
+                : _vm.IsAzureCommunication
+                    ? "The resource answered and accepted the access key."
+                    : "Connection and authentication succeeded.");
         }
         catch (Exception ex)
         {
@@ -967,7 +989,9 @@ public partial class MainWindow : Window
         }
 
         var dialog = new InputDialog(this, "Send a test message",
-            "A short message is sent straight to the smart host with the settings on this page.",
+            _vm.IsAzureCommunication
+                ? "A short message is sent through Azure Communication Services with the stored connection string. \"From\" must be a MailFrom address of the resource."
+                : "A short message is sent straight to the smart host with the settings on this page.",
             ("From", _vm.DefaultTestSender), ("To", ""));
         if (dialog.ShowDialog() != true)
             return;

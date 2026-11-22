@@ -14,44 +14,55 @@ public sealed class EntraAuthenticationTests : IDisposable
 
     public void Dispose() => Directory.Delete(_dir, recursive: true);
 
-    private static RelayOptions ValidAcs() => new()
+    private static RelayOptions ValidM365() => new()
     {
         Security = { AllowedIps = { "10.0.0.0/8" } },
         Upstream =
         {
-            Mode = UpstreamAuthMode.AzureCommunicationServices,
-            Host = AzureCommunicationOptions.DefaultHost,
-            AzureCommunication =
+            Mode = UpstreamAuthMode.Microsoft365,
+            Microsoft365 =
             {
                 TenantId = "11111111-aaaa-bbbb-cccc-222222222222",
                 ClientId = "11111111-2222-3333-4444-555555555555",
-                SmtpUsername = "relay-smtp-user"
+                SenderUsername = "relay@contoso.com"
             }
         }
     };
 
     [Fact]
-    public void AzureCommunicationServicesConfigurationPasses()
+    public void Microsoft365ConfigurationPasses()
     {
-        var o = ValidAcs();
+        var o = ValidM365();
         Assert.Empty(RelayOptionsValidator.Validate(o));
-        Assert.Equal("https://communication.azure.com/.default", o.Upstream.AzureCommunication.Scope);
-        Assert.Equal("AcsClientSecret", o.Upstream.AzureCommunication.ClientSecretName);
-        Assert.Same(o.Upstream.AzureCommunication, o.Upstream.EntraApplication);
-        Assert.Equal("relay-smtp-user", o.Upstream.TokenUserName);
+        Assert.Equal("https://outlook.office365.com/.default", o.Upstream.Microsoft365.Scope);
+        Assert.Equal("M365ClientSecret", o.Upstream.Microsoft365.ClientSecretName);
+        Assert.Same(o.Upstream.Microsoft365, o.Upstream.EntraApplication);
+        Assert.Equal("relay@contoso.com", o.Upstream.TokenUserName);
     }
 
     [Fact]
-    public void AzureCommunicationServicesNeedsItsFields()
+    public void Microsoft365NeedsItsFields()
     {
-        var o = ValidAcs();
-        o.Upstream.AzureCommunication.SmtpUsername = " ";
-        o.Upstream.AzureCommunication.ClientId = "not-a-guid";
+        var o = ValidM365();
+        o.Upstream.Microsoft365.SenderUsername = " ";
+        o.Upstream.Microsoft365.ClientId = "not-a-guid";
         var errors = RelayOptionsValidator.Validate(o);
-        Assert.Contains(errors, e => e.Contains("AzureCommunication.SmtpUsername"));
-        Assert.Contains(errors, e => e.Contains("AzureCommunication.ClientId"));
-        // The Microsoft 365 section is not in use and must not be asked for.
-        Assert.DoesNotContain(errors, e => e.Contains("Microsoft365"));
+        Assert.Contains(errors, e => e.Contains("Microsoft365.SenderUsername"));
+        Assert.Contains(errors, e => e.Contains("Microsoft365.ClientId"));
+        // The Azure Communication Services section is not in use and must not be asked for.
+        Assert.DoesNotContain(errors, e => e.Contains("AzureCommunication"));
+    }
+
+    [Theory]
+    [InlineData(UpstreamAuthMode.Basic)]
+    [InlineData(UpstreamAuthMode.Anonymous)]
+    [InlineData(UpstreamAuthMode.AzureCommunicationServices)]
+    public void OnlyMicrosoft365UsesAnEntraApplication(UpstreamAuthMode mode)
+    {
+        var o = ValidM365();
+        o.Upstream.Mode = mode;
+        Assert.Null(o.Upstream.EntraApplication);
+        Assert.Null(o.Upstream.TokenUserName);
     }
 
     [Theory]
@@ -61,10 +72,10 @@ public sealed class EntraAuthenticationTests : IDisposable
     [InlineData("98 9a 5c 82 20 3a b1 9b 6d b2 9f c4 47 e8 cb 5e be eb 60 d8", true)]
     public void ACertificateCredentialNeedsAThumbprintAndNoSecret(string thumbprint, bool valid)
     {
-        var o = ValidAcs();
-        o.Upstream.AzureCommunication.Credential = EntraCredentialType.Certificate;
-        o.Upstream.AzureCommunication.CertificateThumbprint = thumbprint;
-        o.Upstream.AzureCommunication.ClientSecretName = ""; // not used with a certificate
+        var o = ValidM365();
+        o.Upstream.Microsoft365.Credential = EntraCredentialType.Certificate;
+        o.Upstream.Microsoft365.CertificateThumbprint = thumbprint;
+        o.Upstream.Microsoft365.ClientSecretName = ""; // not used with a certificate
 
         var errors = RelayOptionsValidator.Validate(o);
         Assert.Equal(valid, errors.Count == 0);
@@ -84,19 +95,19 @@ public sealed class EntraAuthenticationTests : IDisposable
     [Fact]
     public void TheNewSettingsSurviveSaveAndLoadAndOldFilesKeepWorking()
     {
-        var o = ValidAcs();
+        var o = ValidM365();
         o.DataDirectory = _dir;
-        o.Upstream.AzureCommunication.Credential = EntraCredentialType.Certificate;
-        o.Upstream.AzureCommunication.CertificateThumbprint = "989A5C82203AB19B6DB29FC447E8CB5EBEEB60D8";
+        o.Upstream.Microsoft365.Credential = EntraCredentialType.Certificate;
+        o.Upstream.Microsoft365.CertificateThumbprint = "989A5C82203AB19B6DB29FC447E8CB5EBEEB60D8";
         o.Snmp.Enabled = true;
         o.Snmp.AllowedManagers.Add("192.168.20.15");
         ConfigLoader.Save(_dir, o);
 
         var back = ConfigLoader.Load(_dir);
-        Assert.Equal(UpstreamAuthMode.AzureCommunicationServices, back.Upstream.Mode);
-        Assert.Equal(EntraCredentialType.Certificate, back.Upstream.AzureCommunication.Credential);
-        Assert.Equal("989A5C82203AB19B6DB29FC447E8CB5EBEEB60D8", back.Upstream.AzureCommunication.CertificateThumbprint);
-        Assert.Equal("relay-smtp-user", back.Upstream.AzureCommunication.SmtpUsername);
+        Assert.Equal(UpstreamAuthMode.Microsoft365, back.Upstream.Mode);
+        Assert.Equal(EntraCredentialType.Certificate, back.Upstream.Microsoft365.Credential);
+        Assert.Equal("989A5C82203AB19B6DB29FC447E8CB5EBEEB60D8", back.Upstream.Microsoft365.CertificateThumbprint);
+        Assert.Equal("relay@contoso.com", back.Upstream.Microsoft365.SenderUsername);
         Assert.True(back.Snmp.Enabled);
         Assert.Equal(new[] { "192.168.20.15" }, back.Snmp.AllowedManagers);
         // Computed properties are not written to the file.
@@ -120,10 +131,10 @@ public sealed class EntraAuthenticationTests : IDisposable
     [Fact]
     public async Task AMissingCertificateIsAPermanentErrorThatNamesIt()
     {
-        var o = ValidAcs();
+        var o = ValidM365();
         o.DataDirectory = _dir;
-        o.Upstream.AzureCommunication.Credential = EntraCredentialType.Certificate;
-        o.Upstream.AzureCommunication.CertificateThumbprint = "0000000000000000000000000000000000000001";
+        o.Upstream.Microsoft365.Credential = EntraCredentialType.Certificate;
+        o.Upstream.Microsoft365.CertificateThumbprint = "0000000000000000000000000000000000000001";
 
         using var provider = new EntraTokenProvider(o.Upstream, SecretStore.Open(o), NullLogger<EntraTokenProvider>.Instance);
         var ex = await Assert.ThrowsAsync<UpstreamDeliveryException>(() => provider.GetAccessTokenAsync(CancellationToken.None));
@@ -134,24 +145,20 @@ public sealed class EntraAuthenticationTests : IDisposable
     [Fact]
     public async Task AMissingClientSecretIsAPermanentErrorThatNamesIt()
     {
-        var o = ValidAcs();
+        var o = ValidM365();
         o.DataDirectory = _dir;
         using var provider = new EntraTokenProvider(o.Upstream, SecretStore.Open(o), NullLogger<EntraTokenProvider>.Instance);
         var ex = await Assert.ThrowsAsync<UpstreamDeliveryException>(() => provider.GetAccessTokenAsync(CancellationToken.None));
         Assert.True(ex.IsPermanent);
-        Assert.Contains("AcsClientSecret", ex.Message);
+        Assert.Contains("M365ClientSecret", ex.Message);
     }
 
-    [Theory]
-    [InlineData(UpstreamAuthMode.AzureCommunicationServices, "relay-smtp-user")]
-    [InlineData(UpstreamAuthMode.Microsoft365, "relay@contoso.com")]
-    public async Task TheTokenIsPresentedWithTheUserNameOfTheMode(UpstreamAuthMode mode, string expectedUser)
+    [Fact]
+    public async Task TheTokenIsPresentedWithTheSendingMailbox()
     {
         using var server = new XOAuth2Server();
-        var o = ValidAcs();
+        var o = ValidM365();
         o.DataDirectory = _dir;
-        o.Upstream.Mode = mode;
-        o.Upstream.Microsoft365.SenderUsername = "relay@contoso.com";
         o.Upstream.Host = "127.0.0.1";
         o.Upstream.Port = server.Port;
         // The fake server has no TLS: the opt-in a real installation should never need.
@@ -162,7 +169,7 @@ public sealed class EntraAuthenticationTests : IDisposable
         var sender = new UpstreamSender(o.Upstream, SecretStore.Open(o), new FixedToken("token-123"), NullLogger<UpstreamSender>.Instance);
         await sender.VerifyConnectionAsync(CancellationToken.None);
 
-        Assert.Equal($"user={expectedUser}\u0001auth=Bearer token-123\u0001\u0001", await server.Credentials);
+        Assert.Equal("user=relay@contoso.com\u0001auth=Bearer token-123\u0001\u0001", await server.Credentials);
     }
 
     private sealed class FixedToken(string token) : IAccessTokenProvider

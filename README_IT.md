@@ -21,7 +21,7 @@
 </p>
 
 <p align="center">
-  <img alt="Versione 2.4.0" src="https://img.shields.io/badge/versione-2.4.0-2563eb">
+  <img alt="Versione 2.5.0" src="https://img.shields.io/badge/versione-2.5.0-2563eb">
   <img alt="Windows Server e Windows 10/11" src="https://img.shields.io/badge/Windows-Server%202016%2B%20%7C%2010%20%7C%2011-0f766e">
   <img alt="Microsoft 365 OAuth2" src="https://img.shields.io/badge/Microsoft%20365-OAuth2-7c3aed">
   <img alt="Self-hosted" src="https://img.shields.io/badge/self--hosted-on%20premises-475569">
@@ -62,7 +62,7 @@ SMTP Relay si mette tra quegli apparati e il sistema di posta:
 
 <table>
   <tr>
-    <td width="50%"><img src="assets/screenshots/smarthost.png" alt="Pagina Smart host"><br><b>Smart host</b>: Microsoft 365 o Azure Communication Services con OAuth2 (client secret o certificato), utente e password, oppure nessuna autenticazione. Il segreto si salva cifrato con un clic; <i>Test connection</i> e <i>Send a test message</i> usano le impostazioni a schermo.</td>
+    <td width="50%"><img src="assets/screenshots/smarthost.png" alt="Pagina Smart host"><br><b>Smart host</b>: Microsoft 365 con OAuth2 (client secret o certificato), Azure Communication Services con la stringa di connessione della risorsa, utente e password, oppure nessuna autenticazione. Il segreto si salva cifrato con un clic; <i>Test connection</i> e <i>Send a test message</i> usano le impostazioni a schermo.</td>
     <td width="50%"><img src="assets/screenshots/access.png" alt="Pagina Allowed senders"><br><b>Allowed senders</b>: indirizzi e reti CIDR, più gli utenti propri del relay per gli apparati che si autenticano. L'elenco si può importare da IIS 6.</td>
   </tr>
   <tr>
@@ -79,7 +79,7 @@ SMTP Relay si mette tra quegli apparati e il sistema di posta:
   </tr>
 </table>
 
-<sub>Le immagini mostrano l'interfaccia reale della versione 2.4.0 con dati di esempio (indirizzi, tenant e messaggi sono esempi). L'interfaccia è in inglese.</sub>
+<sub>Le immagini mostrano l'interfaccia reale della versione 2.5.0 con dati di esempio (indirizzi, tenant e messaggi sono esempi). L'interfaccia è in inglese.</sub>
 
 ## Funzionalità
 
@@ -101,9 +101,10 @@ SMTP Relay si mette tra quegli apparati e il sistema di posta:
 - **Microsoft 365** con OAuth2 client credentials (XOAUTH2). I token sono in cache e rinnovati automaticamente; un
   client secret ruotato viene usato senza riavviare il servizio.
 - **Qualsiasi server SMTP** con utente e password, oppure **senza autenticazione**.
-- **Azure Communication Services** (Email) via SMTP con OAuth2: il relay accede come applicazione Microsoft Entra,
-  senza casella di posta e senza password nelle impostazioni.
-- **Client secret o certificato** per l'applicazione Microsoft Entra, in entrambe le modalità Microsoft. Con il
+- **Azure Communication Services** (Email) con la stringa di connessione della risorsa: la incolli una volta,
+  resta cifrata, e il relay consegna ogni messaggio all'API Email della risorsa via HTTPS. Nessuna registrazione
+  di applicazione e nessuna casella di posta.
+- **Client secret o certificato** per l'applicazione Microsoft Entra di Microsoft 365. Con il
   certificato la chiave privata resta nell'archivio certificati di Windows del server; la console ne crea uno per te.
 - **La cifratura verso lo smart host è imposta**: STARTTLS o TLS implicito. Le credenziali non vengono mai inviate
   su una connessione non cifrata, anche se il server smette di offrire STARTTLS, a meno che tu non lo consenta
@@ -150,9 +151,9 @@ SMTP Relay si mette tra quegli apparati e il sistema di posta:
 Serve un Windows Server (o Windows 10/11) raggiungibile dai tuoi apparati, e i diritti di amministratore.
 Nient'altro: il runtime .NET è incluso nel setup.
 
-**1. Scarica** `SmtpRelay-Setup-2.4.0.exe` dall'
+**1. Scarica** `SmtpRelay-Setup-2.5.0.exe` dall'
 [ultima versione](https://github.com/NEXQsrl/SMTP-Relay/releases/latest). La release elenca lo SHA-256 di ogni file
-(`SHA256SUMS.txt`): controllalo con `Get-FileHash .\SmtpRelay-Setup-2.4.0.exe -Algorithm SHA256`.
+(`SHA256SUMS.txt`): controllalo con `Get-FileHash .\SmtpRelay-Setup-2.5.0.exe -Algorithm SHA256`.
 
 **2. Considera attendibile la firma (una volta per server).** I file sono firmati da *NEXQ S.r.l.* con un
 certificato autofirmato. Windows lo considera attendibile solo dopo che lo hai importato. Il certificato pubblico è
@@ -160,7 +161,7 @@ dentro la firma del file; estrailo, controlla che l'identificazione personale (t
 `989A5C82203AB19B6DB29FC447E8CB5EBEEB60D8`, poi importalo (PowerShell come amministratore):
 
 ```powershell
-$cert = (Get-AuthenticodeSignature .\SmtpRelay-Setup-2.4.0.exe).SignerCertificate
+$cert = (Get-AuthenticodeSignature .\SmtpRelay-Setup-2.5.0.exe).SignerCertificate
 $cert.Thumbprint          # deve essere 989A5C82203AB19B6DB29FC447E8CB5EBEEB60D8
 Export-Certificate -Cert $cert -FilePath .\NEXQ-CodeSigning.cer | Out-Null
 Import-Certificate -FilePath .\NEXQ-CodeSigning.cer -CertStoreLocation Cert:\LocalMachine\Root
@@ -197,7 +198,7 @@ mostrare *Running*.
 ### Installazione automatica
 
 ```powershell
-.\SmtpRelay-Setup-2.4.0.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG="C:\Temp\smtprelay-setup.log"
+.\SmtpRelay-Setup-2.5.0.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG="C:\Temp\smtprelay-setup.log"
 ```
 
 Poi copia il tuo `appsettings.json` nella cartella di installazione, salva il segreto e avvia il servizio:
@@ -217,7 +218,7 @@ cd "C:\Program Files\SMTP Relay"
 | .NET | Niente da installare: la release è self-contained (.NET 10) |
 | Diritti | Amministratore, per installare e per usare la console |
 | Rete in ingresso | La porta di ascolto (25 per impostazione predefinita) dai tuoi apparati |
-| Rete in uscita | Il tuo smart host (Microsoft 365: `smtp.office365.com:587` e `login.microsoftonline.com:443`) |
+| Rete in uscita | Il tuo smart host (Microsoft 365: `smtp.office365.com:587` e `login.microsoftonline.com:443`; Azure Communication Services: l'endpoint della tua risorsa, `<nome>.<regione>.communication.azure.com:443`) |
 | Internet | Non necessario al servizio oltre allo smart host. La console contatta `api.github.com` per gli aggiornamenti (facoltativo) |
 
 ## Configurazione di Microsoft 365
@@ -255,31 +256,60 @@ esecuzione lo usa dal messaggio successivo, senza riavvio.
 
 ## Configurazione di Azure Communication Services
 
-Azure Communication Services (ACS) Email accetta posta via SMTP su `smtp.azurecomm.net`. Il relay accede come
-applicazione Microsoft Entra con OAuth2 (XOAUTH2): non serve alcuna casella di posta.
+Il relay invia tramite l'API Email della tua risorsa Communication Services, via HTTPS, e firma ogni richiesta con
+la chiave di accesso della risorsa. Gli serve solo la **stringa di connessione** (*Connection string*) che mostra
+il portale di Azure: nessuna registrazione di applicazione, nessuno SMTP Username, nessuna casella di posta.
 
 1. **Prepara le risorse** nel [portale di Azure](https://portal.azure.com): una risorsa *Email Communication
    Services* con un dominio verificato, collegata a una risorsa *Communication Services* (*Email > Domains > Connect
    domain*).
-2. **Registra l'applicazione.** Nell'[interfaccia di amministrazione di Microsoft Entra](https://entra.microsoft.com)
-   apri *App registrations > New registration*. Annota **Application (client) ID** e **Directory (tenant) ID**.
-   Crea un client secret, oppure usa un certificato (vedi [sotto](#accesso-con-certificato)).
-3. **Dai accesso all'applicazione.** Nella risorsa Communication Services apri *Access control (IAM) > Add role
-   assignment*, scegli il ruolo **Communication and Email Service Owner** e assegnalo all'applicazione.
-4. **Crea lo SMTP Username.** Nella risorsa Communication Services apri *SMTP Usernames > Add SMTP Username*,
-   seleziona l'applicazione e scegli un nome utente (testo libero, oppure un indirizzo di un dominio collegato).
-   Attendi che lo stato sia *Ready to use*.
-5. **Compila la console**: *Smart host > Azure Communication Services*, poi tenant, client ID e lo SMTP Username
-   esattamente come appare nel portale. Salva il client secret oppure scegli il certificato. Premi
-   **Test connection**.
+2. **Copia la stringa di connessione.** Nella risorsa Communication Services apri *Settings > Keys* e copia
+   **Connection string**, primaria o secondaria. Ha questa forma:
+   `endpoint=https://<nome>.<regione>.communication.azure.com/;accesskey=...`. Copia il valore intero, non la sola
+   chiave.
+3. **Compila la console**: *Smart host > Azure Communication Services*, incolla la stringa di connessione e premi
+   **Store**. Viene cifrata su questo computer e non viene più mostrata: la console mostra solo il nome della
+   risorsa. Premi **Test connection**, poi **Send a test message**.
 
-ACS accetta solo mittenti (indirizzi MailFrom) che esistono in un dominio collegato, ad esempio
-`DoNotReply@contoso.com`. Se i tuoi dispositivi usano altri mittenti, imposta **Always send as** nella console.
-I messaggi con un mittente non ammesso sono rifiutati da ACS e compaiono come `FAILED` nell'audit.
+Da riga di comando: `SmtpRelay.exe set-credential --name AcsConnectionString`.
+
+Cosa sapere di questa modalità:
+
+- **Mittenti.** ACS accetta solo mittenti che sono indirizzi MailFrom di un dominio collegato, ad esempio
+  `DoNotReply@contoso.com` (ne aggiungi altri sul dominio, in *MailFrom addresses*). Il mittente è il `From` del
+  messaggio. Se i tuoi dispositivi usano altri indirizzi, imposta **Always send as** nella console. Un messaggio
+  con un mittente non ammesso è rifiutato da ACS: compare come `FAILED` nell'audit con il motivo indicato da Azure,
+  e una copia resta in **Undelivered**.
+- **Il messaggio è ricostruito da Azure.** L'API Email riceve le parti di un messaggio, non il messaggio in sé. Il
+  relay passa il mittente, i destinatari, l'oggetto, il corpo in testo e in HTML, gli allegati (comprese le
+  immagini mostrate dentro l'HTML), `Reply-To` e le intestazioni `X-`. Chi riceve il messaggio lo decide la busta
+  SMTP, come sempre: i destinatari compaiono in `To` o in `Cc` come nell'originale, e quelli che non sono in
+  nessuno dei due diventano `Bcc`. Tutto il resto è riscritto da Azure: `Message-ID` e `Date` originali, le altre
+  intestazioni e le firme S/MIME o DKIM apposte dal mittente non sopravvivono. Se i messaggi devono arrivare
+  intatti, usa ACS via SMTP (vedi sotto).
+- **Limiti del servizio.** Al momento in cui scriviamo Azure accetta 10 MB per messaggio, allegati compresi (circa
+  7,5 MB di allegati, perché viaggiano in Base64), e 50 destinatari per messaggio, e limita il numero di messaggi
+  al minuto e all'ora ([limiti del servizio](https://learn.microsoft.com/azure/communication-services/concepts/service-limits#email)).
+  Quando Azure chiede di rallentare il relay aspetta e riprova, poi risponde `451` perché il dispositivo ritenti.
+  Abbassa a quei valori **Max message size** e **Max recipients per message** nella pagina **Listener**, così il
+  dispositivo viene avvisato subito.
+- **Accettato non vuol dire consegnato.** `250` e `DELIVERED` significano che Azure ha accettato il messaggio,
+  come con qualsiasi smart host. Quello che succede dopo (rimbalzi, destinatari soppressi) è nei log della risorsa
+  in Azure; il log del relay riporta l'ID operazione che Azure ha dato a ogni messaggio.
+- **Cambio della chiave.** Quando rigeneri una chiave nel portale, salva la nuova stringa di connessione: il
+  servizio in esecuzione la usa dal messaggio successivo, senza riavvio. Azure fornisce due chiavi proprio per
+  passare alla secondaria prima di rigenerare la primaria.
+
+**Se arrivi dalla versione 2.4 o precedente.** Questa modalità accedeva via SMTP (`smtp.azurecomm.net`) con
+un'applicazione Microsoft Entra e uno SMTP Username. Quelle impostazioni non vengono più lette: dopo
+l'aggiornamento salva la stringa di connessione come descritto sopra. Finché non lo fai, i messaggi sono rifiutati
+(`554`) e conservati in **Undelivered**, da dove puoi reinviarli. Per restare su SMTP, scegli invece
+**User name and password** con host `smtp.azurecomm.net`, porta `587`, `StartTls`, lo SMTP Username come nome
+utente e un client secret dell'applicazione come password.
 
 ## Accesso con certificato
 
-Nelle modalità Microsoft 365 e Azure Communication Services l'applicazione può dimostrare la propria identità con
+Nella modalità Microsoft 365 l'applicazione può dimostrare la propria identità con
 un certificato invece che con un client secret. Non si scrive né si copia nulla di segreto: la chiave privata
 nasce sul server e ci resta.
 
@@ -349,7 +379,7 @@ conoscono finché non glielo dici tu.
 | Cosa vedi | Perché | Cosa fare |
 |---|---|---|
 | *Autore sconosciuto* nella richiesta UAC | Il certificato non è ancora attendibile su questo computer | Importalo come al [passo 2](#installazione-in-cinque-minuti). La richiesta mostrerà *Autore verificato: NEXQ S.r.l.* |
-| *PC protetto da Windows* (SmartScreen) | Il file è stato scaricato da Internet e non ha reputazione; una firma autofirmata non ne costruisce | *Ulteriori informazioni > Esegui comunque*, oppure esegui prima `Unblock-File .\SmtpRelay-Setup-2.4.0.exe` dopo averne controllato lo SHA-256 |
+| *PC protetto da Windows* (SmartScreen) | Il file è stato scaricato da Internet e non ha reputazione; una firma autofirmata non ne costruisce | *Ulteriori informazioni > Esegui comunque*, oppure esegui prima `Unblock-File .\SmtpRelay-Setup-2.5.0.exe` dopo averne controllato lo SHA-256 |
 | *Accesso negato* all'avvio del setup o dei programmi, evento 1121 di Microsoft Defender | La regola di riduzione della superficie di attacco *Blocca l'esecuzione dei file eseguibili a meno che non soddisfino un criterio di prevalenza, età o elenco attendibile* blocca qualsiasi programma nuovo | Aggiungi un'esclusione (sotto), oppure in Microsoft Defender per endpoint crea un indicatore **Consenti** per il certificato |
 | L'antivirus mette in quarantena o blocca un file | Euristiche su un programma nuovo, poco diffuso, che ascolta su una porta | Controlla lo SHA-256 con quello della release, poi consenti il certificato dell'autore o escludi la cartella di installazione |
 
@@ -357,7 +387,7 @@ Esclusione per le regole di riduzione della superficie di attacco di Microsoft D
 amministratore; la prima riga serve solo mentre esegui il setup):
 
 ```powershell
-Add-MpPreference -AttackSurfaceReductionOnlyExclusions "C:\Install\SmtpRelay-Setup-2.4.0.exe"
+Add-MpPreference -AttackSurfaceReductionOnlyExclusions "C:\Install\SmtpRelay-Setup-2.5.0.exe"
 Add-MpPreference -AttackSurfaceReductionOnlyExclusions "C:\Program Files\SMTP Relay"
 ```
 
@@ -385,12 +415,12 @@ flowchart LR
         console -. "impostazioni, segreti,<br/>avvio / arresto, log" .- relay
     end
     m365["Microsoft 365<br/>smtp.office365.com"]
-    acs["Azure Communication Services<br/>smtp.azurecomm.net"]
+    acs["Azure Communication Services<br/>API Email della risorsa"]
     other["Qualsiasi server SMTP"]
     nms["Sistema di monitoraggio"]
     devices -- "SMTP, porta 25" --> gate
     relay -- "STARTTLS + OAuth2 (XOAUTH2)" --> m365
-    relay -- "STARTTLS + OAuth2 (XOAUTH2)" --> acs
+    relay -- "HTTPS + chiave di accesso (HMAC)" --> acs
     relay -- "TLS + password, o anonimo" --> other
     nms -. "SNMP, sola lettura (facoltativo)" .-> relay
 ```
@@ -585,12 +615,12 @@ La console scrive `appsettings.json` per te. Ogni impostazione si può anche def
 | `Tls.Mode` | `None` | `None`, `StartTlsOptional`, `StartTlsRequired` |
 | `Tls.CertificateThumbprint` / `CertificatePath` | vuoto | Certificato per STARTTLS |
 | `Upstream.Mode` | `Microsoft365` | `Microsoft365`, `AzureCommunicationServices`, `Basic`, `Anonymous` |
-| `Upstream.Host` / `Port` / `Security` | `smtp.office365.com` / `587` / `StartTls` | Lo smart host. Sicurezza: `StartTls`, `SslOnConnect`, `Auto`, `StartTlsWhenAvailable`, `None` |
+| `Upstream.Host` / `Port` / `Security` | `smtp.office365.com` / `587` / `StartTls` | Lo smart host. Sicurezza: `StartTls`, `SslOnConnect`, `Auto`, `StartTlsWhenAvailable`, `None`. Non usati da Azure Communication Services |
 | `Upstream.AllowInsecureAuthentication` | `false` | Consente le credenziali su una connessione che potrebbe essere in chiaro |
 | `Upstream.MaxAttempts` / `RetryBaseDelaySeconds` | `3` / `5` | Nuovi tentativi sugli errori temporanei |
-| `Upstream.OverrideFromAddress` | vuoto | Mittente di busta fisso |
+| `Upstream.OverrideFromAddress` | vuoto | Mittente di busta fisso (con Azure Communication Services: mittente fisso) |
 | `Upstream.Microsoft365.*` | | `TenantId`, `ClientId`, `SenderUsername`, `Credential` (`ClientSecret` o `Certificate`), `ClientSecretName`, `CertificateThumbprint` |
-| `Upstream.AzureCommunication.*` | | `TenantId`, `ClientId`, `SmtpUsername`, `Credential` (`ClientSecret` o `Certificate`), `ClientSecretName`, `CertificateThumbprint` |
+| `Upstream.AzureCommunication.ConnectionStringSecret` | `AcsConnectionString` | Nome del segreto salvato che contiene la stringa di connessione della risorsa |
 | `Upstream.Basic.*` | | `Username`, `PasswordSecret` |
 | `Logging.MinimumLevel` | `Information` | Da `Verbose` a `Fatal` |
 | `Logging.RetainedFileTimeLimitDays` / `RetainedFileCountLimit` | `31` / `31` | Conservazione |
@@ -651,6 +681,13 @@ e la regola del firewall vengono rimossi. Il setup chiede se eliminare anche imp
 impostazione predefinita vengono conservati.
 
 ## Stato del progetto
+
+La versione 2.5.0 cambia la modalità Azure Communication Services: ora usa la stringa di connessione della risorsa
+e invia tramite l'API Email invece che via SMTP (vedi [sopra](#configurazione-di-azure-communication-services) se
+usavi già questa modalità). Le richieste, la loro firma e la gestione delle risposte sono coperte da test
+automatici contro un server di prova che verifica la firma come documentato da Azure; **la modalità non è stata
+provata dai test automatici contro una risorsa Azure reale** (ne servirebbe una): usa **Send a test message**
+prima di farci affidamento, e controlla che il messaggio arrivi come ti aspetti.
 
 La versione 2.4.0 aggiunge il grafico della pagina Overview, il nome DNS e la disattivazione nell'elenco, e la
 console in sola lettura per un secondo amministratore. I dati su cui si basano sono coperti da test automatici;

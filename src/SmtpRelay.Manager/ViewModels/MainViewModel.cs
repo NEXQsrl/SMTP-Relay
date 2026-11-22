@@ -127,6 +127,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             SnmpManagers.Add(entry);
 
         _secrets = null;
+        _acsStateRead = 0;
         SecretStoreError = null;
         if (!IsDemo)
         {
@@ -176,6 +177,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 warnings.Insert(0, "The SNMP community is not stored yet: the agent answers nobody (SNMP page).");
             if (Options.Upstream.Mode == UpstreamAuthMode.Basic && !_secrets.Contains(Options.Upstream.Basic.PasswordSecret))
                 warnings.Insert(0, "The smart host password is not stored yet (Smart host page).");
+            if (IsAzureCommunication && AcsConnectionStringProblem is { } connectionProblem)
+                warnings.Insert(0, connectionProblem + " (Smart host page)");
         }
         else if (SecretStoreError is not null)
         {
@@ -204,6 +207,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(UpstreamSummary));
         OnPropertyChanged(nameof(AccessSummary));
         OnPropertyChanged(nameof(ClientSecretStatus));
+        OnPropertyChanged(nameof(AcsConnectionStringStatus));
         OnPropertyChanged(nameof(PasswordStatus));
         OnPropertyChanged(nameof(PfxPasswordStatus));
         OnPropertyChanged(nameof(SnmpCommunityStatus));
@@ -296,7 +300,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public string UpstreamSummary => Options.Upstream.Mode switch
     {
         UpstreamAuthMode.Microsoft365 => $"Microsoft 365 (OAuth2) · {Options.Upstream.Host}:{Options.Upstream.Port}",
-        UpstreamAuthMode.AzureCommunicationServices => $"Azure Communication Services (OAuth2) · {Options.Upstream.Host}:{Options.Upstream.Port}",
+        UpstreamAuthMode.AzureCommunicationServices => $"Azure Communication Services (connection string) · {AcsEndpointText}",
         UpstreamAuthMode.Basic => $"User name and password · {Options.Upstream.Host}:{Options.Upstream.Port}",
         _ => $"No authentication · {Options.Upstream.Host}:{Options.Upstream.Port}"
     };
@@ -371,10 +375,11 @@ public sealed class MainViewModel : INotifyPropertyChanged
             return;
 
         Options.Upstream.Mode = mode;
-        // The two Microsoft services have one fixed endpoint; other modes keep what the administrator typed.
-        if (mode is UpstreamAuthMode.Microsoft365 or UpstreamAuthMode.AzureCommunicationServices)
+        // Microsoft 365 has one fixed endpoint; other modes keep what the administrator typed. Azure
+        // Communication Services has no SMTP server at all: its address is in the connection string.
+        if (mode == UpstreamAuthMode.Microsoft365)
         {
-            Options.Upstream.Host = mode == UpstreamAuthMode.Microsoft365 ? "smtp.office365.com" : AzureCommunicationOptions.DefaultHost;
+            Options.Upstream.Host = "smtp.office365.com";
             Options.Upstream.Port = 587;
             Options.Upstream.Security = UpstreamSecureMode.StartTls;
             OnPropertyChanged(nameof(Options));
@@ -383,40 +388,114 @@ public sealed class MainViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(IsBasic));
         OnPropertyChanged(nameof(IsAnonymous));
         OnPropertyChanged(nameof(IsAzureCommunication));
+        OnPropertyChanged(nameof(UsesSmtpServer));
+        OnPropertyChanged(nameof(ShowInsecureAuthentication));
+        OnPropertyChanged(nameof(ServerCardTitle));
+        OnPropertyChanged(nameof(OverrideFromHint));
+        OnPropertyChanged(nameof(AcsConnectionStringStatus));
         NotifyEntraApplication();
         Revalidate();
     }
 
-    // ----- Microsoft Entra application (Microsoft 365 and Azure Communication Services) ------------------
+    /// <summary>False for Azure Communication Services: host, port and connection security do not apply.</summary>
+    public bool UsesSmtpServer => Options.Upstream.UsesSmtp;
 
-    /// <summary>The app registration of the current mode (the Microsoft 365 one when the mode has none, so that bindings always resolve).</summary>
-    public EntraApplicationOptions EntraApp => Options.Upstream.EntraApplication ?? Options.Upstream.Microsoft365;
+    public bool ShowInsecureAuthentication => UsesSmtpServer && !IsAnonymous;
 
-    public bool UsesEntraApp => Options.Upstream.EntraApplication is not null;
+    public string ServerCardTitle => UsesSmtpServer ? "Server" : "Delivery";
 
-    public string EntraCardTitle => IsAzureCommunication ? "Azure Communication Services" : "Microsoft 365 app registration";
+    public string OverrideFromHint => UsesSmtpServer
+        ? "\"Always send as\" replaces the envelope sender of every message. Use it when the smart host only accepts mail from one address."
+        : "\"Always send as\" replaces the sender (From) of every message. Use it when your devices send from addresses that are not MailFrom addresses of the resource: Azure refuses those messages.";
 
-    public string EntraCardIntro => IsAzureCommunication
-        ? "Register an application in Microsoft Entra ID, give it the role \"Communication and Email Service Owner\" on the Communication Services resource, then create an SMTP Username for it on the resource (SMTP Usernames). The README explains each step."
-        : "Register an application in Microsoft Entra ID with the application permission SMTP.SendAsApp, then register its service principal in Exchange Online and give it access to the sending mailbox. The README explains each step.";
+    // ----- Azure Communication Services ------------------------------------------------------------------
 
-    public string EntraIdentityLabel => IsAzureCommunication ? "SMTP Username" : "Sending mailbox (UPN)";
+    private (bool Stored, string? Host) _acsState;
+    private long _acsStateRead; // Environment.TickCount64 of the last look at the store; 0 = look again
 
-    public string EntraIdentityHint => IsAzureCommunication
-        ? "The SMTP Username created on the resource, exactly as shown in the Azure portal. Senders must use a MailFrom address of a domain connected to the resource."
-        : "For example relay@contoso.com.";
-
-    public string EntraIdentity
+    /// <summary>
+    /// Whether a connection string is stored, and the resource it points to (null when it is not a valid one).
+    /// The endpoint is not a secret; the key is never shown.
+    /// </summary>
+    private (bool Stored, string? Host) AcsState
     {
-        get => IsAzureCommunication ? Options.Upstream.AzureCommunication.SmtpUsername : Options.Upstream.Microsoft365.SenderUsername;
-        set
+        get
         {
-            if (IsAzureCommunication)
-                Options.Upstream.AzureCommunication.SmtpUsername = value ?? "";
-            else
-                Options.Upstream.Microsoft365.SenderUsername = value ?? "";
+            if (IsDemo)
+                return (true, "contoso-relay.europe.communication.azure.com");
+
+            // Reading the endpoint means decrypting the secret: once every few seconds is enough (the CLI may
+            // change it meanwhile), not at every tick of the timer that revalidates the page.
+            long now = Environment.TickCount64;
+            if (_acsStateRead != 0 && now - _acsStateRead < 3000)
+                return _acsState;
+
+            bool stored = false;
+            string? host = null;
+            try
+            {
+                var name = Options.Upstream.AzureCommunication.ConnectionStringSecret;
+                stored = _secrets?.Contains(name) == true;
+                if (stored && AcsConnectionString.TryParse(_secrets!.Get(name), out var connection, out _))
+                    host = connection.Endpoint.Host;
+            }
+            catch (Exception)
+            {
+                // a store that cannot be read has its own warning
+            }
+            _acsState = (stored, host);
+            _acsStateRead = now;
+            return _acsState;
         }
     }
+
+    /// <summary>What is wrong with the stored connection string, or null (also when the store cannot be opened: that has its own warning).</summary>
+    private string? AcsConnectionStringProblem
+    {
+        get
+        {
+            if (IsDemo || _secrets is null)
+                return null;
+            var (stored, host) = AcsState;
+            if (!stored)
+                return "The connection string of Azure Communication Services is not stored yet";
+            return host is null
+                ? "The stored connection string of Azure Communication Services is not valid: store it again"
+                : null;
+        }
+    }
+
+    private string? AcsEndpointHost => AcsState.Host;
+
+    private string AcsEndpointText => AcsEndpointHost ?? "connection string not stored";
+
+    public string AcsConnectionStringStatus => AcsState switch
+    {
+        (_, { } host) => "Stored (encrypted) · " + host,
+        (true, null) => "Stored, but not valid",
+        _ => "Not stored"
+    };
+
+    /// <summary>Stores the connection string after checking that it is one. Throws with the reason when it is not.</summary>
+    public void SaveAcsConnectionString(string value)
+    {
+        if (!AcsConnectionString.TryParse(value, out var connection, out var error))
+            throw new InvalidOperationException(error);
+        SaveSecret(Options.Upstream.AzureCommunication.ConnectionStringSecret, value.Trim());
+        ManagerLog.Write($"Connection string of Azure Communication Services stored (resource {connection.Endpoint.Host}).");
+    }
+
+    /// <summary>Where the mail goes, for messages and for the console's log.</summary>
+    public string UpstreamTarget => UsesSmtpServer
+        ? $"{Options.Upstream.Host}:{Options.Upstream.Port}"
+        : AcsEndpointHost ?? "Azure Communication Services";
+
+    // ----- Microsoft Entra application (Microsoft 365) ---------------------------------------------------
+
+    /// <summary>The app registration of Microsoft 365 (always there, so that bindings resolve in every mode).</summary>
+    public EntraApplicationOptions EntraApp => Options.Upstream.Microsoft365;
+
+    public bool UsesEntraApp => Options.Upstream.EntraApplication is not null;
 
     public bool UsesClientSecret
     {
@@ -518,11 +597,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
     {
         OnPropertyChanged(nameof(EntraApp));
         OnPropertyChanged(nameof(UsesEntraApp));
-        OnPropertyChanged(nameof(EntraCardTitle));
-        OnPropertyChanged(nameof(EntraCardIntro));
-        OnPropertyChanged(nameof(EntraIdentityLabel));
-        OnPropertyChanged(nameof(EntraIdentityHint));
-        OnPropertyChanged(nameof(EntraIdentity));
         OnPropertyChanged(nameof(UsesClientSecret));
         OnPropertyChanged(nameof(UsesCertificate));
         OnPropertyChanged(nameof(EntraCertificateThumbprint));
@@ -1108,6 +1182,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         var store = _secrets ?? throw new InvalidOperationException(SecretStoreError ?? "The secret store is not available.");
         store.Set(name, value);
         ManagerLog.Write($"Secret '{name}' stored.");
+        _acsStateRead = 0;
         Revalidate();
     }
 
@@ -1115,6 +1190,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     {
         if (_secrets?.Remove(name) == true)
             ManagerLog.Write($"Secret '{name}' removed.");
+        _acsStateRead = 0;
         Revalidate();
     }
 
@@ -1285,7 +1361,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     {
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(45));
         await CreateSender().VerifyConnectionAsync(cts.Token);
-        ManagerLog.Write($"Connection test to {Options.Upstream.Host}:{Options.Upstream.Port} succeeded.");
+        ManagerLog.Write($"Connection test to {UpstreamTarget} succeeded.");
     }
 
     /// <summary>Sends a short test message through the smart host with the settings on screen.</summary>
@@ -1304,7 +1380,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         await CreateSender().SendAsync(message, from, new[] { to }, cts.Token);
-        ManagerLog.Write($"Test message sent to {to} through {Options.Upstream.Host}.");
+        ManagerLog.Write($"Test message sent to {to} through {(UsesSmtpServer ? Options.Upstream.Host : UpstreamTarget)}.");
     }
 
     public string DefaultTestSender => Options.Upstream.Mode switch
@@ -1312,7 +1388,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
         _ when !string.IsNullOrWhiteSpace(Options.Upstream.OverrideFromAddress) => Options.Upstream.OverrideFromAddress!,
         UpstreamAuthMode.Microsoft365 => Options.Upstream.Microsoft365.SenderUsername,
         UpstreamAuthMode.Basic when Options.Upstream.Basic.Username.Contains('@') => Options.Upstream.Basic.Username,
-        UpstreamAuthMode.AzureCommunicationServices when Options.Upstream.AzureCommunication.SmtpUsername.Contains('@') => Options.Upstream.AzureCommunication.SmtpUsername,
         _ => ""
     };
 

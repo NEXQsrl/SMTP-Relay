@@ -18,8 +18,9 @@ public interface IUpstreamSender
 }
 
 /// <summary>
-/// Forwards messages to the smart host with MailKit, authenticating with Basic or OAuth2 (Microsoft 365,
-/// Azure Communication Services), and retries transient errors with a linear back-off.
+/// Forwards messages to the smart host and retries transient errors with a linear back-off. SMTP servers are
+/// reached with MailKit, authenticating with Basic or OAuth2 (Microsoft 365); Azure Communication Services is
+/// reached through its Email API (<see cref="AcsEmailClient"/>).
 /// </summary>
 public sealed class UpstreamSender : IUpstreamSender
 {
@@ -27,6 +28,11 @@ public sealed class UpstreamSender : IUpstreamSender
     private readonly SecretStore _secrets;
     private readonly IAccessTokenProvider _tokenProvider;
     private readonly ILogger<UpstreamSender> _logger;
+    private readonly AcsEmailClient _acs;
+
+    // Azure may ask to wait before the next request (throttling): it is obeyed up to this long, because the
+    // client is waiting for its answer meanwhile.
+    private static readonly TimeSpan MaxRetryAfter = TimeSpan.FromSeconds(30);
 
     public UpstreamSender(
         UpstreamOptions options,
@@ -38,6 +44,24 @@ public sealed class UpstreamSender : IUpstreamSender
         _secrets = secrets;
         _tokenProvider = tokenProvider;
         _logger = logger;
+        _acs = new AcsEmailClient(options, secrets, logger);
+    }
+
+    /// <summary>
+    /// Where the mail goes, for logs and messages: host and port of the SMTP server, or the endpoint of the
+    /// Azure Communication Services resource (read from the stored connection string, when there is one).
+    /// </summary>
+    public static string DescribeTarget(UpstreamOptions options, SecretStore? secrets)
+    {
+        if (options.UsesSmtp)
+            return $"{options.Host}:{options.Port}";
+
+        string? stored = null;
+        try { stored = secrets?.Get(options.AzureCommunication.ConnectionStringSecret); }
+        catch (Exception) { /* a store that cannot be read is reported where it matters, not here */ }
+        return AcsConnectionString.TryParse(stored, out var connection, out _)
+            ? connection.Endpoint.Host
+            : "Azure Communication Services";
     }
 
     public async Task SendAsync(MimeMessage message, string? envelopeFrom, IReadOnlyList<string> recipients, CancellationToken cancellationToken)
@@ -46,7 +70,7 @@ public sealed class UpstreamSender : IUpstreamSender
         List<MailboxAddress> rcpts;
         try
         {
-            sender = ResolveSender(envelopeFrom);
+            sender = ResolveSender(message, envelopeFrom);
             rcpts = recipients
                 .Where(r => !string.IsNullOrWhiteSpace(r))
                 .Select(MailboxAddress.Parse)
@@ -81,6 +105,8 @@ public sealed class UpstreamSender : IUpstreamSender
                 if (transient && attempt < _options.MaxAttempts)
                 {
                     var delay = TimeSpan.FromSeconds(_options.RetryBaseDelaySeconds * attempt);
+                    if (ex is AcsRequestException { RetryAfter: { } retryAfter } && retryAfter > delay)
+                        delay = retryAfter < MaxRetryAfter ? retryAfter : MaxRetryAfter;
                     _logger.LogWarning(
                         "Delivery attempt {Attempt}/{Max} failed (transient): {Reason}. Retrying in {Delay}s.",
                         attempt, _options.MaxAttempts, LogSanitizer.Clean(ex.Message), delay.TotalSeconds);
@@ -98,14 +124,26 @@ public sealed class UpstreamSender : IUpstreamSender
 
     public async Task VerifyConnectionAsync(CancellationToken cancellationToken)
     {
+        if (!_options.UsesSmtp)
+        {
+            await _acs.VerifyAsync(cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
         using var client = CreateClient();
         await client.ConnectAsync(_options.Host.Trim(), _options.Port, MapSecure(_options), cancellationToken).ConfigureAwait(false);
         await AuthenticateAsync(client, cancellationToken).ConfigureAwait(false);
         await client.DisconnectAsync(true, cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task SendOnceAsync(MimeMessage message, MailboxAddress sender, IList<MailboxAddress> recipients, CancellationToken cancellationToken)
+    private async Task SendOnceAsync(MimeMessage message, MailboxAddress sender, List<MailboxAddress> recipients, CancellationToken cancellationToken)
     {
+        if (!_options.UsesSmtp)
+        {
+            await _acs.SendAsync(message, sender, recipients, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
         using var client = CreateClient();
         await client.ConnectAsync(_options.Host.Trim(), _options.Port, MapSecure(_options), cancellationToken).ConfigureAwait(false);
         await AuthenticateAsync(client, cancellationToken).ConfigureAwait(false);
@@ -152,11 +190,16 @@ public sealed class UpstreamSender : IUpstreamSender
                 isPermanent: true);
     }
 
-    private MailboxAddress ResolveSender(string? envelopeFrom)
+    private MailboxAddress ResolveSender(MimeMessage message, string? envelopeFrom)
     {
         // Priority: explicit override -> return-path of the envelope -> authentication identity.
         if (!string.IsNullOrWhiteSpace(_options.OverrideFromAddress))
             return MailboxAddress.Parse(_options.OverrideFromAddress);
+
+        // Azure Communication Services has one sender only, and it is the From the recipient reads: the author
+        // of the message comes before the return-path.
+        if (!_options.UsesSmtp && message.From.Mailboxes.FirstOrDefault() is { } author)
+            return author;
 
         if (!string.IsNullOrWhiteSpace(envelopeFrom))
             return MailboxAddress.Parse(envelopeFrom);
@@ -165,8 +208,6 @@ public sealed class UpstreamSender : IUpstreamSender
         {
             UpstreamAuthMode.Basic => _options.Basic.Username,
             UpstreamAuthMode.Microsoft365 => _options.Microsoft365.SenderUsername,
-            // An ACS SMTP user name is an address only when the administrator chose the e-mail format.
-            UpstreamAuthMode.AzureCommunicationServices => _options.AzureCommunication.SmtpUsername,
             _ => ""
         };
 
@@ -197,6 +238,7 @@ public sealed class UpstreamSender : IUpstreamSender
         MailKit.ServiceNotConnectedException => true,
         MsalServiceException mse => mse.StatusCode is >= 500 or 429 or 408,
         MsalClientException => false,
+        AcsRequestException acs => acs.IsTransient,
         HttpRequestException => true,
         System.Net.Sockets.SocketException => true,
         IOException => true,

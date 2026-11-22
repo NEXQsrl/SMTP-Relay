@@ -82,11 +82,16 @@ public static partial class RelayOptionsValidator
             errors.Add("Tls.MinimumProtocol must be 'Tls12' or 'Tls13'.");
 
         // Upstream
+        // Host, Port and Security describe an SMTP server: Azure Communication Services has none (its address
+        // is in the connection string), and whatever those settings hold must not block it.
         var up = o.Upstream;
-        if (string.IsNullOrWhiteSpace(up.Host) || Uri.CheckHostName(up.Host.Trim()) == UriHostNameType.Unknown)
-            errors.Add("Upstream.Host is required and must be a host name or an IP address.");
-        if (up.Port is < 1 or > 65535)
-            errors.Add($"Upstream.Port is not valid: {up.Port}.");
+        if (up.UsesSmtp)
+        {
+            if (string.IsNullOrWhiteSpace(up.Host) || Uri.CheckHostName(up.Host.Trim()) == UriHostNameType.Unknown)
+                errors.Add("Upstream.Host is required and must be a host name or an IP address.");
+            if (up.Port is < 1 or > 65535)
+                errors.Add($"Upstream.Port is not valid: {up.Port}.");
+        }
         if (up.MaxAttempts is < 1 or > 10)
             errors.Add("Upstream.MaxAttempts must be between 1 and 10.");
         if (up.TimeoutSeconds is < 5 or > 600)
@@ -97,7 +102,7 @@ public static partial class RelayOptionsValidator
             errors.Add("Upstream.OverrideFromAddress is not a valid e-mail address.");
 
         bool mayBeClearText = up.Security is UpstreamSecureMode.None or UpstreamSecureMode.StartTlsWhenAvailable;
-        if (up.Mode != UpstreamAuthMode.Anonymous && mayBeClearText && !up.AllowInsecureAuthentication)
+        if (up.UsesSmtp && up.Mode != UpstreamAuthMode.Anonymous && mayBeClearText && !up.AllowInsecureAuthentication)
         {
             errors.Add($"Upstream.Security '{up.Security}' could send the credentials in clear text. " +
                        "Use StartTls, SslOnConnect or Auto, or set Upstream.AllowInsecureAuthentication to true.");
@@ -119,10 +124,8 @@ public static partial class RelayOptionsValidator
                 break;
 
             case UpstreamAuthMode.AzureCommunicationServices:
-                ValidateEntraApplication(up.AzureCommunication, "Upstream.AzureCommunication", errors);
-                var smtpUser = up.AzureCommunication.SmtpUsername;
-                if (string.IsNullOrWhiteSpace(smtpUser) || smtpUser.Any(char.IsControl))
-                    errors.Add("Upstream.AzureCommunication.SmtpUsername is required (the SMTP Username created on the Communication Services resource).");
+                if (!IsValidName(up.AzureCommunication.ConnectionStringSecret))
+                    errors.Add("Upstream.AzureCommunication.ConnectionStringSecret is required (name of the stored secret that holds the connection string of the resource).");
                 break;
         }
 
@@ -187,7 +190,7 @@ public static partial class RelayOptionsValidator
             warnings.Add("User names and passwords of the relay users may travel in clear text (Security.Authentication.AllowWithoutTls is on).");
 
         bool mayBeClearText = o.Upstream.Security is UpstreamSecureMode.None or UpstreamSecureMode.StartTlsWhenAvailable;
-        if (o.Upstream.Mode != UpstreamAuthMode.Anonymous && mayBeClearText && o.Upstream.AllowInsecureAuthentication)
+        if (o.Upstream.UsesSmtp && o.Upstream.Mode != UpstreamAuthMode.Anonymous && mayBeClearText && o.Upstream.AllowInsecureAuthentication)
             warnings.Add("Upstream credentials may travel in clear text (AllowInsecureAuthentication is on).");
         if (o.Tls.Mode == InboundTlsMode.None)
             warnings.Add("Inbound TLS is off: clients talk to the relay in clear text.");

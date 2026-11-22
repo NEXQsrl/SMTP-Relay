@@ -5,9 +5,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project Overview
 
 NEXQ SMTP Relay: a Windows SMTP relay in C# / .NET 10, meant to replace the IIS 6 SMTP relay. It accepts mail from
-IP-allowlisted internal senders (optionally signed in with the relay's own users) and forwards it to a smart host: Microsoft 365 or Azure Communication Services via
-OAuth2 client credentials (XOAUTH2, client secret or certificate), any SMTP server via Basic auth, or an anonymous
-connector. Windows-only (`net10.0-windows`, DPAPI,
+IP-allowlisted internal senders (optionally signed in with the relay's own users) and forwards it to a smart host: Microsoft 365 via
+OAuth2 client credentials (XOAUTH2, client secret or certificate), Azure Communication Services through its Email
+API with the connection string of the resource, any SMTP server via Basic auth, or an anonymous connector. Windows-only (`net10.0-windows`, DPAPI,
 Windows service APIs, WPF). Source-available under PolyForm Shield 1.0.0; the repository is `NEXQsrl/SMTP-Relay`.
 
 **Language convention.** Everything the administrator reads is in **English**: console UI, CLI output, log
@@ -48,7 +48,7 @@ Three projects share one installation folder (the release publishes them self-co
   `ConfigLoader` load + atomic save, `RelayOptionsValidator` errors and warnings), `Security/` (`SecretStore`,
   `SecretProtector`, `MachineKey`, `WindowsAcl`, `IpAllowList`, `LogSanitizer`, `CertificateFinder`,
   `RelayUserStore`), `Migration/` (`Iis6RelayList`, the import of the IIS 6 relay restrictions), `Relay/`
-  (`UpstreamSender`, `EntraTokenProvider`, `FailedSpool`), `Monitoring/` (`DeliveryCounters`, `AuditTrail`, `SnmpResponder`,
+  (`UpstreamSender`, `EntraTokenProvider`, `AcsEmailClient`, `AcsConnectionString`, `FailedSpool`), `Monitoring/` (`DeliveryCounters`, `AuditTrail`, `SnmpResponder`,
   `RelayMib`). Anything both executables need goes here.
 - **`src/SmtpRelay.Service`** (`SmtpRelay.exe`): dual-mode entry point. If `args[0]` is a CLI verb
   (`Cli/CommandLineHandler.cs`) it runs the command and exits; otherwise it validates the config fail-fast and runs
@@ -68,8 +68,9 @@ Inbound message flow, wired in `SmtpRelayHostedService` on the `SmtpServer` libr
 3. `Smtp/RelayMessageStore.cs` hands the message to the sender, maps the outcome to the SMTP reply (250 / 451 /
    554), writes the audit line and spools failed messages as `.eml`. Unclassified exceptions are treated as
    transient so a defect never loses mail silently.
-4. `Relay/UpstreamSender.cs` delivers via MailKit with linear back-off. Transient vs permanent is signalled with
-   `UpstreamDeliveryException`. Credentials are sent only when `client.IsSecure` (or `AllowInsecureAuthentication`).
+4. `Relay/UpstreamSender.cs` delivers via MailKit with linear back-off (Azure Communication Services: via
+   `AcsEmailClient`, same retry loop). Transient vs permanent is signalled with `UpstreamDeliveryException`.
+   Credentials are sent only when `client.IsSecure` (or `AllowInsecureAuthentication`).
 
 Inbound sign-in (`Security.Authentication`, off by default): `Smtp/RelayUserAuthenticator.cs` checks SMTP AUTH
 against `RelayUserStore` (`{DataDirectory}\users.json`, PBKDF2 hashes, reloaded when the file changes like the
@@ -80,9 +81,19 @@ the session with `SessionKeys.MustAuthenticate`. Users are managed from the cons
 CLI verbs `set-user`, `remove-user`, `enable-user`, `disable-user`, `list-users`.
 
 Upstream authentication: `UpstreamOptions.Mode` selects Basic, Anonymous, Microsoft365 or
-AzureCommunicationServices. The two Microsoft modes share `EntraApplicationOptions` (tenant, client, `Credential` =
-ClientSecret or Certificate from `LocalMachine\My`) and `EntraTokenProvider`; they differ only in the scope, the
-default host and the XOAUTH2 user name (`UpstreamOptions.TokenUserName`: the mailbox UPN, or the ACS SMTP Username).
+AzureCommunicationServices. Microsoft365 uses `EntraApplicationOptions` (tenant, client, `Credential` =
+ClientSecret or Certificate from `LocalMachine\My`) and `EntraTokenProvider`; the XOAUTH2 user name is the mailbox
+UPN (`UpstreamOptions.TokenUserName`).
+
+Azure Communication Services is not SMTP (`UpstreamOptions.UsesSmtp` is false: Host, Port and Security are ignored
+and not validated; print the destination with `UpstreamSender.DescribeTarget`). The connection string of the
+resource (`endpoint=...;accesskey=...`, the secret `AzureCommunication.ConnectionStringSecret`) is parsed by
+`AcsConnectionString`; `AcsEmailClient` turns the MIME message into the JSON of `POST /emails:send` (sender = From
+of the message, recipients from the SMTP envelope placed in to/cc/bcc as the headers show them, text and HTML
+body, attachments, Reply-To, `X-` headers) and signs each request with HMAC-SHA256 as Azure documents. HTTP 202 is
+"delivered": the operation is not polled (the status API has its own, lower, rate limit). The connection string
+does not work on `smtp.azurecomm.net`, which wants an Entra application: until 2.4 this mode did that, and its old
+settings (`TenantId`, `SmtpUsername`, ...) are ignored when present in a settings file.
 
 Monitoring: `RelayMessageStore` updates `DeliveryCounters` (today's delivered / failed, seeded from the audit trail
 at start) next to every audit line. `Snmp/SnmpAgentService` (only when `Snmp.Enabled`) serves them over UDP with
@@ -157,6 +168,7 @@ the console.
 - `appsettings.json` is installed with `onlyifdoesntexist uninsneveruninstall`: new settings must have sensible
   defaults in the options classes, because existing installations keep their old file.
 - The tests (`tests/SmtpRelay.Tests`) run the real listener against a fake smart host on loopback; SMTP-path
-  changes should be covered there. `SnmpTests` queries the real agent with SharpSnmpLib (a test-only dependency:
+  changes should be covered there. `FakeAcsResource` (in `AzureCommunicationTests.cs`) is the fake Email API: it
+  recomputes the signature of every request. No test talks to a real Azure resource. `SnmpTests` queries the real agent with SharpSnmpLib (a test-only dependency:
   the product has no SNMP library). `TheReleaseSetupPassesTheUpdateVerification` only acts when
   `SMTPRELAY_SIGNED_SETUP` points to a built setup.

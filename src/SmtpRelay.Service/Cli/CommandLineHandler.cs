@@ -150,6 +150,14 @@ public static class CommandLineHandler
             return 2;
         }
 
+        // The one secret with a format of its own: a wrong paste is caught here, not at the first message.
+        if (name.Equals(options.Upstream.AzureCommunication.ConnectionStringSecret, StringComparison.OrdinalIgnoreCase) &&
+            !AcsConnectionString.TryParse(value, out _, out var problem))
+        {
+            Console.Error.WriteLine(problem + " Nothing was saved.");
+            return 2;
+        }
+
         SecretStore.Open(options).Set(name, value);
         Console.WriteLine($"Secret '{name}' encrypted and saved in {options.SecretsFilePath}");
         return 0;
@@ -347,8 +355,8 @@ public static class CommandLineHandler
         var sender = new UpstreamSender(
             options.Upstream, secrets, tokenProvider, NullLogger<UpstreamSender>.Instance);
 
-        Console.WriteLine($"Testing {options.Upstream.Host}:{options.Upstream.Port} " +
-                          $"(authentication {options.Upstream.Mode}, security {options.Upstream.Security})...");
+        Console.WriteLine($"Testing {UpstreamSender.DescribeTarget(options.Upstream, secrets)} " +
+                          $"(authentication {options.Upstream.Mode}, security {(options.Upstream.UsesSmtp ? options.Upstream.Security.ToString() : "HTTPS")})...");
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(options.Upstream.TimeoutSeconds + 10));
         try
@@ -400,7 +408,9 @@ public static class CommandLineHandler
                           $"{(auth.AllowFromAnyAddress ? "from any address" : "from the allowlist only")}, " +
                           $"{(auth.AllowWithoutTls ? "also without TLS" : "only with TLS")}");
         }
-        sb.AppendLine($"Upstream             : {o.Upstream.Mode} -> {o.Upstream.Host}:{o.Upstream.Port} ({o.Upstream.Security})");
+        sb.AppendLine(o.Upstream.UsesSmtp
+            ? $"Upstream             : {o.Upstream.Mode} -> {o.Upstream.Host}:{o.Upstream.Port} ({o.Upstream.Security})"
+            : $"Upstream             : {o.Upstream.Mode} -> {UpstreamSender.DescribeTarget(o.Upstream, secrets)} (Email API, HTTPS)");
         switch (o.Upstream.Mode)
         {
             case UpstreamAuthMode.Basic:
@@ -412,8 +422,10 @@ public static class CommandLineHandler
                 AppendEntraApplication(sb, o.Upstream.Microsoft365, secrets);
                 break;
             case UpstreamAuthMode.AzureCommunicationServices:
-                sb.AppendLine($"  SmtpUsername       : {o.Upstream.AzureCommunication.SmtpUsername}");
-                AppendEntraApplication(sb, o.Upstream.AzureCommunication, secrets);
+                var acsSecret = o.Upstream.AzureCommunication.ConnectionStringSecret;
+                var acsState = !secrets.Contains(acsSecret) ? "[MISSING]"
+                    : AcsConnectionString.TryParse(secrets.Get(acsSecret), out _, out var acsError) ? "[set]" : "[NOT VALID: " + acsError + "]";
+                sb.AppendLine($"  ConnectionString   : {acsState} (secret '{acsSecret}')");
                 break;
         }
         sb.AppendLine($"Logs                 : {o.LogDirectory} (keep {o.Logging.RetainedFileCountLimit} files / {o.Logging.RetainedFileTimeLimitDays?.ToString() ?? "unlimited"} days)");
@@ -552,6 +564,7 @@ Without a command the executable runs the relay (as a service, or in the console
 
 EXAMPLES:
   SmtpRelay set-credential --name M365ClientSecret
+  SmtpRelay set-credential --name AcsConnectionString
   SmtpRelay test-upstream
   SmtpRelay install
   SmtpRelay start

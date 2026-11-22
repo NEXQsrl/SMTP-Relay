@@ -86,9 +86,10 @@ public sealed class SmtpRelayHostedService : BackgroundService
             };
 
             _logger.LogInformation(
-                "Listening on {Ip}:{Port} | upstream {Mode} {Host}:{UpstreamPort} ({Security}) | inbound TLS {Tls} | {AllowCount} allowlist entries",
+                "Listening on {Ip}:{Port} | upstream {Mode} {Target} ({Security}) | inbound TLS {Tls} | {AllowCount} allowlist entries",
                 _options.Listener.IpAddress, _options.Listener.Port,
-                _options.Upstream.Mode, _options.Upstream.Host, _options.Upstream.Port, _options.Upstream.Security,
+                _options.Upstream.Mode, UpstreamSender.DescribeTarget(_options.Upstream, _secrets),
+                _options.Upstream.UsesSmtp ? _options.Upstream.Security.ToString() : "HTTPS",
                 _options.Tls.Mode, _allowList.Count);
 
             await server.StartAsync(stoppingToken).ConfigureAwait(false);

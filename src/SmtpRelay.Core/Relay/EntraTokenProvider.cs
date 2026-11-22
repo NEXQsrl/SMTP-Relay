@@ -13,7 +13,7 @@ public interface IAccessTokenProvider
 }
 
 /// <summary>
-/// Provides the access token for SMTP AUTH XOAUTH2 (Microsoft 365 or Azure Communication Services) with the
+/// Provides the access token for SMTP AUTH XOAUTH2 (Microsoft 365) with the
 /// OAuth2 client credentials flow (app-only). The application proves its identity with a client secret or with
 /// a certificate. MSAL caches the token in memory and renews it before it expires.
 /// </summary>

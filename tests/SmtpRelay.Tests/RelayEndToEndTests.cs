@@ -122,6 +122,60 @@ public sealed class RelayEndToEndTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task MessageIsForwardedToAzureCommunicationServicesWithItsConnectionString()
+    {
+        using var azure = new FakeAcsResource();
+        await StartRelayAsync(o =>
+        {
+            o.Upstream.Mode = UpstreamAuthMode.AzureCommunicationServices;
+            SecretStore.Open(o).Set(o.Upstream.AzureCommunication.ConnectionStringSecret, azure.ConnectionString);
+        });
+
+        using (var client = await ConnectAsync())
+        {
+            await client.SendAsync(NewMessage("Scan from printer"));
+            await client.DisconnectAsync(true);
+        }
+
+        // Nothing went to the SMTP smart host: the message left through the Email API, signed.
+        Assert.Empty(_smartHost.Messages);
+        var request = Assert.Single(azure.Requests);
+        Assert.True(request.SignatureValid);
+        var json = request.Json.RootElement;
+        Assert.Equal("printer@corp.example", json.GetProperty("senderAddress").GetString());
+        Assert.Equal("Scan from printer", json.GetProperty("content").GetProperty("subject").GetString());
+        Assert.Contains(".leading dot line", json.GetProperty("content").GetProperty("plainText").GetString());
+        Assert.Equal("alice@example.org", Assert.Single(json.GetProperty("recipients").GetProperty("to").EnumerateArray()).GetProperty("address").GetString());
+        Assert.Equal("bob@example.org", Assert.Single(json.GetProperty("recipients").GetProperty("cc").EnumerateArray()).GetProperty("address").GetString());
+
+        var audit = Assert.Single(_logs.Entries, e => e.Category == LoggingSetup.AuditSourceContext);
+        Assert.StartsWith("DELIVERED client=127.0.0.1 user=- from=printer@corp.example to=alice@example.org,bob@example.org", audit.Message);
+        Assert.Equal((1, 0), _counters.Today);
+    }
+
+    [Fact]
+    public async Task AMessageAzureRefusesBecomes554AndIsSpooled()
+    {
+        using var azure = new FakeAcsResource();
+        azure.Answer(404, """{"error":{"code":"DomainNotLinked","message":"The specified sender domain has not been linked."}}""");
+        await StartRelayAsync(o =>
+        {
+            o.Upstream.Mode = UpstreamAuthMode.AzureCommunicationServices;
+            SecretStore.Open(o).Set(o.Upstream.AzureCommunication.ConnectionStringSecret, azure.ConnectionString);
+        });
+
+        using var client = await ConnectAsync();
+        var ex = await Assert.ThrowsAsync<SmtpCommandException>(() => client.SendAsync(NewMessage()));
+        Assert.Equal(554, (int)ex.StatusCode);
+
+        var audit = Assert.Single(_logs.Entries, e => e.Category == LoggingSetup.AuditSourceContext);
+        Assert.StartsWith("FAILED client=127.0.0.1", audit.Message);
+        Assert.Contains("permanent=True", audit.Message);
+        Assert.Contains("DomainNotLinked", audit.Message);
+        Assert.Single(Directory.GetFiles(Path.Combine(_dataDir, "failed"), "*.eml"));
+    }
+
+    [Fact]
     public async Task SeveralMessagesOnOneConnectionAreAllForwarded()
     {
         await StartRelayAsync();
