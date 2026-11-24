@@ -966,7 +966,7 @@ public partial class MainWindow : Window
             ShowTestResult(true, _vm.IsAnonymous
                 ? "Connection succeeded."
                 : _vm.IsAzureCommunication
-                    ? "The resource answered and accepted the access key."
+                    ? "The resource answers over HTTPS and accepted the access key."
                     : "Connection and authentication succeeded.");
         }
         catch (Exception ex)

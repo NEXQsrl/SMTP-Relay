@@ -91,7 +91,11 @@ resource (`endpoint=...;accesskey=...`, the secret `AzureCommunication.Connectio
 `AcsConnectionString`; `AcsEmailClient` turns the MIME message into the JSON of `POST /emails:send` (sender = From
 of the message, recipients from the SMTP envelope placed in to/cc/bcc as the headers show them, text and HTML
 body, attachments, Reply-To, `X-` headers) and signs each request with HMAC-SHA256 as Azure documents. HTTP 202 is
-"delivered": the operation is not polled (the status API has its own, lower, rate limit). The connection string
+"delivered": the operation is not polled (the status API has its own, lower, rate limit). The connection test
+(`AcsEmailClient.VerifyAsync`) is an unsigned `GET /` (is the resource there?) and then a signed `POST /emails:send`
+with `{}` (is the key refused?). Never probe with `GET /emails/operations/<unknown id>`: with a valid key the real
+service keeps that request waiting (2.5.0 did, and the test timed out on working resources); a wrong key gets 401
+at once on any request, so no answer to the key check counts as "not refused". The connection string
 does not work on `smtp.azurecomm.net`, which wants an Entra application: until 2.4 this mode did that, and its old
 settings (`TenantId`, `SmtpUsername`, ...) are ignored when present in a settings file.
 

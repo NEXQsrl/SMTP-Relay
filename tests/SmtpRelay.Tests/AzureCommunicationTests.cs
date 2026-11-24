@@ -313,22 +313,68 @@ public sealed class AzureCommunicationTests : IDisposable
         var good = Options(_acs.ConnectionString);
         await Sender(good).VerifyConnectionAsync(CancellationToken.None);
 
-        var probe = Assert.Single(_acs.Requests);
-        Assert.Equal("GET", probe.Method);
-        Assert.StartsWith("/emails/operations/", probe.PathAndQuery);
-        Assert.True(probe.SignatureValid);
+        // First "is the resource there?", with no signature; then a signed send request with nothing to send.
+        // Never the state of an operation: the real service keeps that request waiting (the fake does too).
+        var requests = _acs.Requests.ToList();
+        Assert.Equal(2, requests.Count);
+        Assert.Equal("GET", requests[0].Method);
+        Assert.StartsWith("/?", requests[0].PathAndQuery);
+        Assert.False(requests[0].SignatureValid);
+        Assert.Equal("POST", requests[1].Method);
+        Assert.Equal("/emails:send?api-version=2025-09-01", requests[1].PathAndQuery);
+        Assert.True(requests[1].SignatureValid);
+        Assert.Equal("{}", Encoding.UTF8.GetString(requests[1].Body));
         // Logs and messages name the resource, which is not a secret.
         Assert.Equal("127.0.0.1", UpstreamSender.DescribeTarget(good.Upstream, SecretStore.Open(good)));
 
         SecretStore.Open(good).Set("AcsConnectionString", $"endpoint=http://127.0.0.1:{_acs.Port}/;accesskey={Convert.ToBase64String(new byte[32])}");
         var ex = await Assert.ThrowsAnyAsync<Exception>(() => Sender(good).VerifyConnectionAsync(CancellationToken.None));
         Assert.Contains("401", ex.Message);
+        Assert.Contains("connection string", ex.Message);
+    }
+
+    [Fact]
+    public async Task AResourceThatTakesTheKeyButKeepsTheTestWaitingStillPasses()
+    {
+        // What 2.5.0 got wrong: Azure delivered the messages, and the test said it did not answer.
+        var o = Options(_acs.ConnectionString);
+        _acs.KeepSignedRequestsWaiting = true;
+        var secrets = SecretStore.Open(o);
+
+        var client = new AcsEmailClient(o.Upstream, secrets, NullLogger.Instance) { KeyCheckWait = TimeSpan.FromSeconds(1) };
+        await client.VerifyAsync(CancellationToken.None);
+
+        // A key that does not sign is refused at once, waiting or not.
+        secrets.Set("AcsConnectionString", $"endpoint=http://127.0.0.1:{_acs.Port}/;accesskey={Convert.ToBase64String(new byte[32])}");
+        var ex = await Assert.ThrowsAnyAsync<Exception>(() => client.VerifyAsync(CancellationToken.None));
+        Assert.Contains("401", ex.Message);
+    }
+
+    [Fact]
+    public async Task AResourceThatCannotBeReachedFailsTheTestAndSaysWhere()
+    {
+        // A port nobody listens on: what a firewall that closes HTTPS looks like.
+        var probe = new TcpListener(IPAddress.Loopback, 0);
+        probe.Start();
+        int port = ((IPEndPoint)probe.LocalEndpoint).Port;
+        probe.Stop();
+        var o = Options($"endpoint=http://127.0.0.1:{port}/;accesskey={Convert.ToBase64String(new byte[32])}");
+
+        var ex = await Assert.ThrowsAsync<HttpRequestException>(() => Sender(o).VerifyConnectionAsync(CancellationToken.None));
+
+        Assert.Contains($"Cannot reach 127.0.0.1 on port {port}", ex.Message);
     }
 }
 
 /// <summary>
 /// Just enough of the Email API of a Communication Services resource: it recomputes the HMAC signature of
 /// every request from the documented recipe and answers 401 when it does not match.
+/// <para>
+/// It also behaves as a real resource was seen to (November 2026): a request that is not signed, or signed with
+/// another key, gets 401 at once whatever it asks; the root answers 404; the state of an operation that does not
+/// exist, asked with the right key, is kept waiting. That an empty send request with the right key gets 400 is
+/// what the API documents for a missing required field; it could not be tried here without a real key.
+/// </para>
 /// </summary>
 internal sealed class FakeAcsResource : IDisposable
 {
@@ -336,6 +382,7 @@ internal sealed class FakeAcsResource : IDisposable
     private readonly byte[] _key = RandomNumberGenerator.GetBytes(32);
     private readonly ConcurrentQueue<(int Status, string Body, int? RetryAfter)> _answers = new();
     private readonly ConcurrentQueue<Request> _requests = new();
+    private readonly CancellationTokenSource _stopping = new();
 
     public FakeAcsResource()
     {
@@ -370,6 +417,9 @@ internal sealed class FakeAcsResource : IDisposable
     /// <summary>The next correctly signed request gets this answer instead of the usual one.</summary>
     public void Answer(int status, string body, int? retryAfterSeconds = null) => _answers.Enqueue((status, body, retryAfterSeconds));
 
+    /// <summary>Correctly signed requests get no answer at all (they are neither refused nor served).</summary>
+    public bool KeepSignedRequestsWaiting { get; set; }
+
     private async Task ServeAsync()
     {
         while (true)
@@ -378,50 +428,90 @@ internal sealed class FakeAcsResource : IDisposable
             try { context = await _listener.GetContextAsync(); }
             catch (Exception ex) when (ex is HttpListenerException or ObjectDisposedException or InvalidOperationException) { return; }
 
-            try
-            {
-                using var buffer = new MemoryStream();
-                await context.Request.InputStream.CopyToAsync(buffer);
-                var body = buffer.ToArray();
-                var http = context.Request;
-
-                // Azure's recipe: VERB \n path and query \n date;host;hash of the body, signed with the key.
-                var date = http.Headers["x-ms-date"] ?? "";
-                var hash = http.Headers["x-ms-content-sha256"] ?? "";
-                var toSign = $"{http.HttpMethod}\n{http.RawUrl}\n{date};{http.Headers["Host"]};{hash}";
-                var expected = "HMAC-SHA256 SignedHeaders=x-ms-date;host;x-ms-content-sha256&Signature=" +
-                               Convert.ToBase64String(HMACSHA256.HashData(_key, Encoding.UTF8.GetBytes(toSign)));
-                bool valid = http.Headers["Authorization"] == expected &&
-                             hash == Convert.ToBase64String(SHA256.HashData(body)) &&
-                             DateTimeOffset.TryParse(date, out var sent) && (DateTimeOffset.UtcNow - sent).Duration() < TimeSpan.FromMinutes(5);
-
-                _requests.Enqueue(new Request(http.HttpMethod, http.RawUrl ?? "", http.ContentType ?? "", body, valid));
-
-                (int Status, string Body, int? RetryAfter) answer;
-                if (!valid)
-                    answer = (401, """{"error":{"code":"Denied","message":"Denied by the resource provider."}}""", null);
-                else if (!_answers.TryDequeue(out answer))
-                    answer = http.HttpMethod == "POST"
-                        ? (202, $$"""{"id":"{{Guid.NewGuid():D}}","status":"Running"}""", null)
-                        : (404, """{"error":{"code":"OperationNotFound","message":"The operation was not found."}}""", null);
-
-                context.Response.StatusCode = answer.Status;
-                if (answer.RetryAfter is { } seconds)
-                    context.Response.Headers["Retry-After"] = seconds.ToString();
-                var bytes = Encoding.UTF8.GetBytes(answer.Body);
-                context.Response.ContentType = "application/json";
-                context.Response.ContentLength64 = bytes.Length;
-                await context.Response.OutputStream.WriteAsync(bytes);
-                context.Response.Close();
-            }
-            catch (Exception ex) when (ex is HttpListenerException or IOException or ObjectDisposedException)
-            {
-                // the client went away
-            }
+            // Each request on its own: one that is kept waiting must not hold the next one.
+            _ = Task.Run(() => HandleAsync(context));
         }
     }
 
-    public void Dispose() => _listener.Close();
+    private async Task HandleAsync(HttpListenerContext context)
+    {
+        try
+        {
+            using var buffer = new MemoryStream();
+            await context.Request.InputStream.CopyToAsync(buffer);
+            var body = buffer.ToArray();
+            var http = context.Request;
+            var path = (http.RawUrl ?? "").Split('?')[0];
+
+            // Azure's recipe: VERB \n path and query \n date;host;hash of the body, signed with the key.
+            var date = http.Headers["x-ms-date"] ?? "";
+            var hash = http.Headers["x-ms-content-sha256"] ?? "";
+            var toSign = $"{http.HttpMethod}\n{http.RawUrl}\n{date};{http.Headers["Host"]};{hash}";
+            var expected = "HMAC-SHA256 SignedHeaders=x-ms-date;host;x-ms-content-sha256&Signature=" +
+                           Convert.ToBase64String(HMACSHA256.HashData(_key, Encoding.UTF8.GetBytes(toSign)));
+            bool valid = http.Headers["Authorization"] == expected &&
+                         hash == Convert.ToBase64String(SHA256.HashData(body)) &&
+                         DateTimeOffset.TryParse(date, out var sent) && (DateTimeOffset.UtcNow - sent).Duration() < TimeSpan.FromMinutes(5);
+
+            _requests.Enqueue(new Request(http.HttpMethod, http.RawUrl ?? "", http.ContentType ?? "", body, valid));
+
+            (int Status, string Body, int? RetryAfter) answer;
+            if (path == "/")
+            {
+                answer = (404, "", null);
+            }
+            else if (!valid)
+            {
+                answer = (401, """{"error":{"code":"Denied","message":"Denied by the resource provider."}}""", null);
+            }
+            else if (KeepSignedRequestsWaiting || http.HttpMethod == "GET")
+            {
+                // No answer until the test is over.
+                try { await Task.Delay(Timeout.Infinite, _stopping.Token); }
+                catch (OperationCanceledException) { }
+                context.Response.Abort();
+                return;
+            }
+            else if (!_answers.TryDequeue(out answer))
+            {
+                answer = IsMessage(body)
+                    ? (202, $$"""{"id":"{{Guid.NewGuid():D}}","status":"Running"}""", null)
+                    : (400, """{"error":{"code":"InvalidRequest","message":"The senderAddress field is required."}}""", null);
+            }
+
+            context.Response.StatusCode = answer.Status;
+            if (answer.RetryAfter is { } seconds)
+                context.Response.Headers["Retry-After"] = seconds.ToString();
+            var bytes = Encoding.UTF8.GetBytes(answer.Body);
+            context.Response.ContentType = "application/json";
+            context.Response.ContentLength64 = bytes.Length;
+            await context.Response.OutputStream.WriteAsync(bytes);
+            context.Response.Close();
+        }
+        catch (Exception ex) when (ex is HttpListenerException or IOException or ObjectDisposedException or InvalidOperationException)
+        {
+            // the client went away, or the test is over
+        }
+    }
+
+    private static bool IsMessage(byte[] body)
+    {
+        try
+        {
+            using var json = JsonDocument.Parse(body);
+            return json.RootElement.ValueKind == JsonValueKind.Object && json.RootElement.TryGetProperty("senderAddress", out _);
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    public void Dispose()
+    {
+        _stopping.Cancel();
+        _listener.Close();
+    }
 
     public sealed record Request(string Method, string PathAndQuery, string ContentType, byte[] Body, bool SignatureValid)
     {

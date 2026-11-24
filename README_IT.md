@@ -21,7 +21,7 @@
 </p>
 
 <p align="center">
-  <img alt="Versione 2.5.0" src="https://img.shields.io/badge/versione-2.5.0-2563eb">
+  <img alt="Versione 2.5.1" src="https://img.shields.io/badge/versione-2.5.1-2563eb">
   <img alt="Windows Server e Windows 10/11" src="https://img.shields.io/badge/Windows-Server%202016%2B%20%7C%2010%20%7C%2011-0f766e">
   <img alt="Microsoft 365 OAuth2" src="https://img.shields.io/badge/Microsoft%20365-OAuth2-7c3aed">
   <img alt="Self-hosted" src="https://img.shields.io/badge/self--hosted-on%20premises-475569">
@@ -79,7 +79,7 @@ SMTP Relay si mette tra quegli apparati e il sistema di posta:
   </tr>
 </table>
 
-<sub>Le immagini mostrano l'interfaccia reale della versione 2.5.0 con dati di esempio (indirizzi, tenant e messaggi sono esempi). L'interfaccia è in inglese.</sub>
+<sub>Le immagini mostrano l'interfaccia reale della versione 2.5.1 con dati di esempio (indirizzi, tenant e messaggi sono esempi). L'interfaccia è in inglese.</sub>
 
 ## Funzionalità
 
@@ -151,9 +151,9 @@ SMTP Relay si mette tra quegli apparati e il sistema di posta:
 Serve un Windows Server (o Windows 10/11) raggiungibile dai tuoi apparati, e i diritti di amministratore.
 Nient'altro: il runtime .NET è incluso nel setup.
 
-**1. Scarica** `SmtpRelay-Setup-2.5.0.exe` dall'
+**1. Scarica** `SmtpRelay-Setup-2.5.1.exe` dall'
 [ultima versione](https://github.com/NEXQsrl/SMTP-Relay/releases/latest). La release elenca lo SHA-256 di ogni file
-(`SHA256SUMS.txt`): controllalo con `Get-FileHash .\SmtpRelay-Setup-2.5.0.exe -Algorithm SHA256`.
+(`SHA256SUMS.txt`): controllalo con `Get-FileHash .\SmtpRelay-Setup-2.5.1.exe -Algorithm SHA256`.
 
 **2. Considera attendibile la firma (una volta per server).** I file sono firmati da *NEXQ S.r.l.* con un
 certificato autofirmato. Windows lo considera attendibile solo dopo che lo hai importato. Il certificato pubblico è
@@ -161,7 +161,7 @@ dentro la firma del file; estrailo, controlla che l'identificazione personale (t
 `989A5C82203AB19B6DB29FC447E8CB5EBEEB60D8`, poi importalo (PowerShell come amministratore):
 
 ```powershell
-$cert = (Get-AuthenticodeSignature .\SmtpRelay-Setup-2.5.0.exe).SignerCertificate
+$cert = (Get-AuthenticodeSignature .\SmtpRelay-Setup-2.5.1.exe).SignerCertificate
 $cert.Thumbprint          # deve essere 989A5C82203AB19B6DB29FC447E8CB5EBEEB60D8
 Export-Certificate -Cert $cert -FilePath .\NEXQ-CodeSigning.cer | Out-Null
 Import-Certificate -FilePath .\NEXQ-CodeSigning.cer -CertStoreLocation Cert:\LocalMachine\Root
@@ -198,7 +198,7 @@ mostrare *Running*.
 ### Installazione automatica
 
 ```powershell
-.\SmtpRelay-Setup-2.5.0.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG="C:\Temp\smtprelay-setup.log"
+.\SmtpRelay-Setup-2.5.1.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG="C:\Temp\smtprelay-setup.log"
 ```
 
 Poi copia il tuo `appsettings.json` nella cartella di installazione, salva il segreto e avvia il servizio:
@@ -379,7 +379,7 @@ conoscono finché non glielo dici tu.
 | Cosa vedi | Perché | Cosa fare |
 |---|---|---|
 | *Autore sconosciuto* nella richiesta UAC | Il certificato non è ancora attendibile su questo computer | Importalo come al [passo 2](#installazione-in-cinque-minuti). La richiesta mostrerà *Autore verificato: NEXQ S.r.l.* |
-| *PC protetto da Windows* (SmartScreen) | Il file è stato scaricato da Internet e non ha reputazione; una firma autofirmata non ne costruisce | *Ulteriori informazioni > Esegui comunque*, oppure esegui prima `Unblock-File .\SmtpRelay-Setup-2.5.0.exe` dopo averne controllato lo SHA-256 |
+| *PC protetto da Windows* (SmartScreen) | Il file è stato scaricato da Internet e non ha reputazione; una firma autofirmata non ne costruisce | *Ulteriori informazioni > Esegui comunque*, oppure esegui prima `Unblock-File .\SmtpRelay-Setup-2.5.1.exe` dopo averne controllato lo SHA-256 |
 | *Accesso negato* all'avvio del setup o dei programmi, evento 1121 di Microsoft Defender | La regola di riduzione della superficie di attacco *Blocca l'esecuzione dei file eseguibili a meno che non soddisfino un criterio di prevalenza, età o elenco attendibile* blocca qualsiasi programma nuovo | Aggiungi un'esclusione (sotto), oppure in Microsoft Defender per endpoint crea un indicatore **Consenti** per il certificato |
 | L'antivirus mette in quarantena o blocca un file | Euristiche su un programma nuovo, poco diffuso, che ascolta su una porta | Controlla lo SHA-256 con quello della release, poi consenti il certificato dell'autore o escludi la cartella di installazione |
 
@@ -387,7 +387,7 @@ Esclusione per le regole di riduzione della superficie di attacco di Microsoft D
 amministratore; la prima riga serve solo mentre esegui il setup):
 
 ```powershell
-Add-MpPreference -AttackSurfaceReductionOnlyExclusions "C:\Install\SmtpRelay-Setup-2.5.0.exe"
+Add-MpPreference -AttackSurfaceReductionOnlyExclusions "C:\Install\SmtpRelay-Setup-2.5.1.exe"
 Add-MpPreference -AttackSurfaceReductionOnlyExclusions "C:\Program Files\SMTP Relay"
 ```
 
@@ -681,6 +681,12 @@ e la regola del firewall vengono rimossi. Il setup chiede se eliminare anche imp
 impostazione predefinita vengono conservati.
 
 ## Stato del progetto
+
+La versione 2.5.1 corregge **Test connection** nella modalità Azure Communication Services: nella 2.5.0 rispondeva
+che la risorsa "did not answer within 30 seconds" mentre i messaggi venivano consegnati. Il test ora verifica che
+la risorsa risponda via HTTPS (porta 443), poi che non rifiuti la chiave di accesso. L'invio è stato provato a
+mano con una risorsa reale; **il test corretto è stato provato con una risorsa reale solo con una chiave non sua**,
+per vederla rifiutata: segnalaci se con la tua non passa.
 
 La versione 2.5.0 cambia la modalità Azure Communication Services: ora usa la stringa di connessione della risorsa
 e invia tramite l'API Email invece che via SMTP (vedi [sopra](#configurazione-di-azure-communication-services) se

@@ -25,11 +25,15 @@ internal sealed class AcsEmailClient
 {
     internal const string ApiVersion = "2025-09-01";
 
+    // A port that a firewall drops silently must not take the whole time allowed for a message to be noticed.
+    private static readonly TimeSpan ConnectTimeout = TimeSpan.FromSeconds(15);
+
     // One client for the process: the connections to the resource are reused. Redirects are never followed,
     // because the signature covers the host the request was meant for.
     private static readonly HttpClient Http = new(new SocketsHttpHandler
     {
         AllowAutoRedirect = false,
+        ConnectTimeout = ConnectTimeout,
         PooledConnectionLifetime = TimeSpan.FromMinutes(5)
     })
     {
@@ -39,6 +43,9 @@ internal sealed class AcsEmailClient
     private readonly UpstreamOptions _options;
     private readonly SecretStore _secrets;
     private readonly ILogger _logger;
+
+    /// <summary>How long the connection test waits for Azure to refuse the key (see <see cref="VerifyAsync"/>).</summary>
+    internal TimeSpan KeyCheckWait { get; init; } = TimeSpan.FromSeconds(10);
 
     public AcsEmailClient(UpstreamOptions options, SecretStore secrets, ILogger logger)
     {
@@ -64,20 +71,56 @@ internal sealed class AcsEmailClient
             LogSanitizer.Clean(operation ?? "unknown"));
     }
 
-    /// <summary>Checks that the resource answers and accepts the access key, without sending anything.</summary>
+    /// <summary>
+    /// Checks, without sending anything, that the resource can be reached over HTTPS and that it takes the access key.
+    /// </summary>
     public async Task VerifyAsync(CancellationToken cancellationToken)
     {
         var connection = GetConnection();
 
-        // The state of an operation that does not exist: a request that changes nothing and still has to be signed.
-        using var response = await SendRequestAsync(
-            connection, HttpMethod.Get, $"/emails/operations/{Guid.NewGuid():D}", Array.Empty<byte>(), cancellationToken).ConfigureAwait(false);
+        // 1. Is the resource there? A request with no signature: whatever Azure answers ("not found", "denied")
+        //    proves that the name resolves, the HTTPS port is open and the certificate is good, through the same
+        //    proxy settings the messages will use.
+        using (await SendRequestAsync(connection, HttpMethod.Get, "/", Array.Empty<byte>(), cancellationToken,
+                   sign: false, timeout: Limit(ConnectTimeout)).ConfigureAwait(false))
+        {
+        }
 
-        // "Not found" is the expected answer and proves the signature was accepted. Only a refused key, throttling
-        // and server errors mean the resource cannot be used right now.
-        int status = (int)response.StatusCode;
-        if (status is 401 or 403 or 408 or 429 or >= 500)
-            throw await ReadErrorAsync(response, cancellationToken).ConfigureAwait(false);
+        // 2. Does it take the key? A signed send request with nothing in it: no message can come out of it, and
+        //    Azure checks the signature before it looks at the content.
+        //    Do NOT ask for the state of an operation that does not exist instead: with a valid key Azure keeps
+        //    that request waiting, and the test of 2.5.0 timed out on resources that were working.
+        HttpResponseMessage response;
+        try
+        {
+            response = await SendRequestAsync(connection, HttpMethod.Post, "/emails:send", "{}"u8.ToArray(), cancellationToken,
+                timeout: Limit(KeyCheckWait)).ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
+            // Azure refuses a wrong key within a fraction of a second, and step 1 has just shown that it answers.
+            // Silence is therefore not a refusal: a working resource must never fail the test because of the
+            // way one request is treated.
+            _logger.LogInformation(
+                "Azure Communication Services ({Host}) did not answer the key check within {Seconds} seconds and did not refuse the key: taken as accepted.",
+                connection.Endpoint.Host, Limit(KeyCheckWait).TotalSeconds);
+            return;
+        }
+
+        using (response)
+        {
+            // "Bad request" is the expected answer: the key was accepted and the empty message was not. Only a
+            // refused key, throttling and server errors mean the resource cannot be used right now.
+            int status = (int)response.StatusCode;
+            if (status is 401 or 403 or 408 or 429 or >= 500)
+                throw await ReadErrorAsync(response, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private TimeSpan Limit(TimeSpan wait)
+    {
+        var configured = TimeSpan.FromSeconds(_options.TimeoutSeconds);
+        return wait < configured ? wait : configured;
     }
 
     private AcsConnectionString GetConnection()
@@ -95,7 +138,8 @@ internal sealed class AcsEmailClient
     }
 
     private async Task<HttpResponseMessage> SendRequestAsync(
-        AcsConnectionString connection, HttpMethod method, string path, byte[] body, CancellationToken cancellationToken)
+        AcsConnectionString connection, HttpMethod method, string path, byte[] body, CancellationToken cancellationToken,
+        bool sign = true, TimeSpan? timeout = null)
     {
         var uri = new Uri(connection.Endpoint.GetLeftPart(UriPartial.Authority) + path + "?api-version=" + ApiVersion);
         using var request = new HttpRequestMessage(method, uri);
@@ -104,17 +148,31 @@ internal sealed class AcsEmailClient
             request.Content = new ByteArrayContent(body);
             request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
         }
-        Sign(request, connection.AccessKey, body, DateTimeOffset.UtcNow);
+        if (sign)
+            Sign(request, connection.AccessKey, body, DateTimeOffset.UtcNow);
 
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(TimeSpan.FromSeconds(_options.TimeoutSeconds));
+        var wait = timeout ?? TimeSpan.FromSeconds(_options.TimeoutSeconds);
+        var where = $"{uri.Host} on port {uri.Port} ({uri.Scheme.ToUpperInvariant()})";
+        using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        limit.CancelAfter(wait);
         try
         {
-            return await Http.SendAsync(request, timeout.Token).ConfigureAwait(false);
+            return await Http.SendAsync(request, limit.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && !limit.IsCancellationRequested)
+        {
+            // Not our limit: the connection itself could not be made in time.
+            throw new HttpRequestException(
+                $"Cannot reach {where}: no connection within {ConnectTimeout.TotalSeconds:0} seconds. Check that the firewall or the proxy lets this computer connect to it.");
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            throw new TimeoutException($"Azure Communication Services ({uri.Host}) did not answer within {_options.TimeoutSeconds} seconds.");
+            throw new TimeoutException($"Azure Communication Services ({uri.Host}) did not answer within {wait.TotalSeconds:0} seconds.");
+        }
+        catch (HttpRequestException ex)
+        {
+            // Name not found, port closed, certificate refused: say where, the inner error says why.
+            throw new HttpRequestException($"Cannot reach {where}: {ex.Message}", ex);
         }
     }
 
